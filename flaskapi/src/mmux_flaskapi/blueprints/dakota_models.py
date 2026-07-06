@@ -233,13 +233,15 @@ class DistributionParams(BaseModel):
     # does not auto-convert nested camelCase field names.
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    distribution: Literal["normal", "uniform"] = Field(
-        ..., description="Type of distribution (normal or uniform)"
+    distribution: Literal["normal", "uniform", "log-normal"] = Field(
+        ..., description="Type of distribution (normal, uniform, or log-normal)"
     )
     mean: float | None = None
     std: float | None = None
     min: float | None = None
     max: float | None = None
+    log_mean: float | None = Field(default=None, alias="logMean")
+    log_std: float | None = Field(default=None, alias="logStd")
     log_scale: bool = Field(
         default=False,
         alias="logScale",
@@ -272,6 +274,13 @@ class DistributionParams(BaseModel):
                 raise ValueError(
                     "log_scale requires min > 0 for uniform distributions (log10 is undefined)"
                 )
+        elif self.distribution == "log-normal":
+            if self.log_mean is None or self.log_std is None:
+                raise ValueError(
+                    "Log-normal distribution requires 'logMean' and 'logStd' parameters"
+                )
+            if self.log_std <= 0:
+                raise ValueError("logStd must be positive for log-normal distribution")
 
         return self
 
