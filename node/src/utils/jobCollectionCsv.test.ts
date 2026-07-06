@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { analyzeUploadedJobCollectionCsv } from "./jobCollectionCsv";
 
+function buildCsv(variable: string, values: number[]): string {
+  const header = `schema_version,source_job_uid,status,input__${variable},output__score`;
+  const rows = values.map((value, index) => `1,job-${index},SUCCESS,${value},${index}`);
+  return [header, ...rows].join("\n");
+}
+
+// Binomial(n=6, p=0.5)-shaped counts around integer positions -3..3: symmetric,
+// with skewness=0 and excess kurtosis close to 0 (well below the uniform reference
+// of -1.2), so it reliably reads as "normal" rather than "uniform" under the
+// shapeScore heuristic. 64 samples clears the hasEnoughSamples threshold (10).
+const normalLikePositions = [-3, -2, -1, 0, 1, 2, 3];
+const normalLikeCounts = [1, 6, 15, 20, 15, 6, 1];
+const normalLikeValues = normalLikePositions.flatMap((position, index) => Array(normalLikeCounts[index]).fill(position));
+
 describe("analyzeUploadedJobCollectionCsv", () => {
   it("derives min/max presets and enables log scale for log-distributed positive inputs", () => {
     const csvContent = [
@@ -67,6 +81,60 @@ describe("analyzeUploadedJobCollectionCsv", () => {
       min: -10,
       max: 10,
       logScale: false,
+    });
+  });
+
+  it("without inferDistributionType, always defaults to uniform even for normal/log-normal-shaped data", () => {
+    const analysis = analyzeUploadedJobCollectionCsv(buildCsv("x", normalLikeValues));
+
+    expect(analysis.inputPresets.x?.distribution).toBe("uniform");
+  });
+
+  it("with inferDistributionType, selects constant for a single repeated value", () => {
+    const csvContent = buildCsv("x", Array(20).fill(5));
+
+    const analysis = analyzeUploadedJobCollectionCsv(csvContent, { inferDistributionType: true });
+
+    expect(analysis.inputPresets.x).toEqual({ distribution: "constant", value: 5 });
+  });
+
+  it("with inferDistributionType, selects normal for symmetric bell-shaped data", () => {
+    const analysis = analyzeUploadedJobCollectionCsv(buildCsv("x", normalLikeValues), {
+      inferDistributionType: true,
+    });
+
+    const preset = analysis.inputPresets.x;
+    expect(preset?.distribution).toBe("normal");
+    if (preset?.distribution === "normal") {
+      expect(preset.mean).toBeCloseTo(0, 5);
+      expect(preset.std).toBeGreaterThan(0);
+    }
+  });
+
+  it("with inferDistributionType, selects log-normal for exponentiated bell-shaped data and rounds to 3 significant digits", () => {
+    const values = normalLikeValues.map(position => Math.exp(position));
+    const analysis = analyzeUploadedJobCollectionCsv(buildCsv("x", values), { inferDistributionType: true });
+
+    const preset = analysis.inputPresets.x;
+    expect(preset?.distribution).toBe("log-normal");
+    if (preset?.distribution === "log-normal") {
+      expect(preset.logMean).toBeCloseTo(0, 5);
+      expect(preset.logStd).toBeGreaterThan(0);
+      // rounded to 3 significant digits
+      expect(preset.logStd).toBe(Number(preset.logStd.toPrecision(3)));
+    }
+  });
+
+  it("with inferDistributionType, still falls back to uniform when there aren't enough samples", () => {
+    const csvContent = buildCsv("x", [1, 10, 100, 1000, 10000]);
+
+    const analysis = analyzeUploadedJobCollectionCsv(csvContent, { inferDistributionType: true });
+
+    expect(analysis.inputPresets.x).toEqual({
+      distribution: "uniform",
+      min: 1,
+      max: 10000,
+      logScale: true,
     });
   });
 });
