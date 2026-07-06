@@ -1,11 +1,10 @@
 import { computeDiagnostics } from "./distributionDiagnostics";
 
-export interface UploadedInputPreset extends VarSelection {
-  distribution: "uniform";
-  min: number;
-  max: number;
-  logScale: boolean;
-}
+export type UploadedInputPreset =
+  | (VarSelection & { distribution: "constant"; value: number })
+  | (VarSelection & { distribution: "uniform"; min: number; max: number; logScale: boolean })
+  | (VarSelection & { distribution: "normal"; mean: number; std: number })
+  | (VarSelection & { distribution: "log-normal"; logMean: number; logStd: number });
 
 export interface UploadedJobCollectionAnalysis {
   inputVars: string[];
@@ -112,7 +111,80 @@ function shouldUseLogScale(values: number[]): boolean {
   return logScore <= rawScore - 0.06;
 }
 
-export function analyzeUploadedJobCollectionCsv(csvContent: string): UploadedJobCollectionAnalysis {
+// Theoretical shapeScore (|skewness| + |excess kurtosis|) of a perfect uniform
+// distribution: skewness = 0, excess kurtosis = -1.2.
+const uniformReferenceShapeScore = 1.2;
+// Only prefer a richer/more-specific distribution (log-normal over normal/uniform,
+// normal over uniform) when its shape-fit is clearly better by this margin — mirrors
+// the margin already used by shouldUseLogScale above, avoiding needless flip-flopping.
+const distributionPreferenceMargin = 0.06;
+
+function roundToSignificantDigits(value: number, digits = 3): number {
+  return Number(value.toPrecision(digits));
+}
+
+/**
+ * Infer the best-fit distribution (constant, uniform, normal, or log-normal) for a
+ * variable's imported data, so newly-created functions start with sensible defaults
+ * instead of always defaulting to uniform. Falls back to uniform (+ the existing
+ * logScale heuristic) when there isn't enough data to trust a shape comparison.
+ *
+ * Values computed from data (mean/std/logMean/logStd) are rounded to 3 significant
+ * digits; literal min/max bounds are preserved exactly.
+ */
+function pickDistributionPreset(values: number[]): UploadedInputPreset {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  if (min === max) {
+    return { distribution: "constant", value: roundToSignificantDigits(min) };
+  }
+
+  const diagnostics = computeDiagnostics(values);
+  if (!diagnostics.hasEnoughSamples) {
+    return { distribution: "uniform", min, max, logScale: shouldUseLogScale(values) };
+  }
+
+  const allPositive = values.every(value => value > 0);
+  const normalDistance = shapeScore(values);
+  const uniformDistance = Math.abs(normalDistance - uniformReferenceShapeScore);
+  const logNormalDistance = allPositive ? shapeScore(values.map(value => Math.log(value))) : undefined;
+
+  const bestLinearDistance = Math.min(normalDistance, uniformDistance);
+
+  if (logNormalDistance !== undefined && logNormalDistance + distributionPreferenceMargin < bestLinearDistance) {
+    const logStats = computeDiagnostics(values.map(value => Math.log(value)));
+    return {
+      distribution: "log-normal",
+      logMean: roundToSignificantDigits(logStats.mean),
+      logStd: roundToSignificantDigits(logStats.std),
+    };
+  }
+
+  if (normalDistance + distributionPreferenceMargin < uniformDistance) {
+    return {
+      distribution: "normal",
+      mean: roundToSignificantDigits(diagnostics.mean),
+      std: roundToSignificantDigits(diagnostics.std),
+    };
+  }
+
+  return { distribution: "uniform", min, max, logScale: shouldUseLogScale(values) };
+}
+
+export interface AnalyzeUploadedJobCollectionCsvOptions {
+  /**
+   * When true, infer the best-fit distribution (constant/uniform/normal/log-normal) per
+   * variable instead of always defaulting to uniform. Intended for the "create new
+   * function from CSV" flow only.
+   */
+  inferDistributionType?: boolean;
+}
+
+export function analyzeUploadedJobCollectionCsv(
+  csvContent: string,
+  options: AnalyzeUploadedJobCollectionCsvOptions = {},
+): UploadedJobCollectionAnalysis {
   const { tableLines } = splitCsvPreambleAndTable(csvContent);
   const dataLines = tableLines.map(line => line.trimEnd()).filter(line => line.trim().length > 0);
   const headerLine = dataLines[0];
@@ -145,15 +217,10 @@ export function analyzeUploadedJobCollectionCsv(csvContent: string): UploadedJob
       .filter(variable => valueBuckets[variable].length > 0)
       .map(variable => {
         const values = valueBuckets[variable];
-        return [
-          variable,
-          {
-            distribution: "uniform",
-            min: Math.min(...values),
-            max: Math.max(...values),
-            logScale: shouldUseLogScale(values),
-          } satisfies UploadedInputPreset,
-        ];
+        const preset: UploadedInputPreset = options.inferDistributionType
+          ? pickDistributionPreset(values)
+          : { distribution: "uniform", min: Math.min(...values), max: Math.max(...values), logScale: shouldUseLogScale(values) };
+        return [variable, preset];
       }),
   );
 
