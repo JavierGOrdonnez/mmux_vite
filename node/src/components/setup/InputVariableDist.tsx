@@ -136,45 +136,44 @@ const UniformInputDistribution = ({ inputVar, distribution, handleSetValue }: In
   );
 };
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const LogNormalInputDistribution = ({ inputVar, distribution, handleSetValue }: InputDistProps) => {
-  const errorNaNLocation = !(distribution[inputVar].location !== undefined && !Number.isNaN(distribution[inputVar].location));
-  const errorNaNScale = !(distribution[inputVar].scale !== undefined && !Number.isNaN(distribution[inputVar].scale));
-  const errorBeyondRangeLocation =
+  const errorNaNLogMean = !(distribution[inputVar].logMean !== undefined && !Number.isNaN(distribution[inputVar].logMean));
+  const errorNaNLogStd = !(distribution[inputVar].logStd !== undefined && !Number.isNaN(distribution[inputVar].logStd));
+  const errorBeyondRangeLogMean =
     distribution[inputVar] &&
-    ((typeof distribution[inputVar].location === "number" && distribution[inputVar].location < -1e9) ||
-      (typeof distribution[inputVar].location === "number" && distribution[inputVar].location > 1e9));
-  const errorBeyondRangeScale =
+    ((typeof distribution[inputVar].logMean === "number" && distribution[inputVar].logMean < -1e9) ||
+      (typeof distribution[inputVar].logMean === "number" && distribution[inputVar].logMean > 1e9));
+  const errorBeyondRangeLogStd =
     distribution[inputVar] &&
-    ((typeof distribution[inputVar].scale === "number" && distribution[inputVar].scale <= 0) ||
-      (typeof distribution[inputVar].scale === "number" && distribution[inputVar].scale > 1e9));
+    ((typeof distribution[inputVar].logStd === "number" && distribution[inputVar].logStd <= 0) ||
+      (typeof distribution[inputVar].logStd === "number" && distribution[inputVar].logStd > 1e9));
 
   let errorText = "";
-  if (errorNaNLocation || errorNaNScale) {
+  if (errorNaNLogMean || errorNaNLogStd) {
     errorText = "Empty value";
-  } else if (errorBeyondRangeLocation) {
+  } else if (errorBeyondRangeLogMean) {
     errorText = "Out of range (-1e9, 1e9)";
-  } else if (errorBeyondRangeScale) {
+  } else if (errorBeyondRangeLogStd) {
     errorText = "Out of range (>0, 1e9)";
   }
 
-  const error = errorNaNLocation || errorNaNScale || errorBeyondRangeLocation || errorBeyondRangeScale;
+  const error = errorNaNLogMean || errorNaNLogStd || errorBeyondRangeLogMean || errorBeyondRangeLogStd;
 
   return (
     <>
       <InputBlock
-        name="Log Location"
-        value={distribution[inputVar].location !== undefined ? distribution[inputVar].location : NaN}
+        name="Log Mean"
+        value={distribution[inputVar].logMean !== undefined ? distribution[inputVar].logMean : NaN}
         minmax={{ min: -1e9, max: 1e9 }}
-        error={errorNaNLocation || errorBeyondRangeLocation}
-        onChange={value => handleSetValue(inputVar, "location", value as number)}
+        error={errorNaNLogMean || errorBeyondRangeLogMean}
+        onChange={value => handleSetValue(inputVar, "logMean", value as number)}
       />
       <InputBlock
-        name="Log Scale"
-        value={distribution[inputVar].scale !== undefined ? distribution[inputVar].scale : NaN}
+        name="Log Std"
+        value={distribution[inputVar].logStd !== undefined ? distribution[inputVar].logStd : NaN}
         minmax={{ min: 0.0000000001, max: 1e9 }}
-        error={errorNaNScale || errorBeyondRangeScale}
-        onChange={value => handleSetValue(inputVar, "scale", value as number)}
+        error={errorNaNLogStd || errorBeyondRangeLogStd}
+        onChange={value => handleSetValue(inputVar, "logStd", value as number)}
       />
       {error && <Typography color="error">{errorText}</Typography>}
     </>
@@ -427,9 +426,7 @@ export function InputVariableDist() {
                     <MenuItem value="constant">Constant</MenuItem>
                     <MenuItem value="normal">Normal (Gaussian)</MenuItem>
                     <MenuItem value="uniform">Uniform</MenuItem>
-                    <MenuItem value="log-normal" disabled>
-                      LogNormal
-                    </MenuItem>
+                    <MenuItem value="log-normal">LogNormal</MenuItem>
                     <MenuItem value="exponential" disabled>
                       Exponential
                     </MenuItem>
@@ -469,13 +466,15 @@ export function InputVariableDist() {
                     )}
                   </>
                 )}
+                {localDistribution[inputVar]?.distribution === "log-normal" && (
+                  <LogNormalInputDistribution
+                    inputVar={inputVar}
+                    distribution={localDistribution}
+                    handleSetValue={handleSetValue}
+                  />
+                )}
                 {!localDistribution[inputVar]?.distribution && "not found"}
-                {/* For v9 release, removed log-normal and exponential input distributions
-                  ) : localDistribution[inputVar]?.distribution === "log-normal" ? (
-                      <LogNormalInputDistribution inputVar={inputVar} />
-                    ) : localDistribution[inputVar]?.distribution === "exponential" ? (
-                        <ExponentialInputDistribution inputVar={inputVar} />
-                */}
+                {/* For v9 release, removed exponential input distribution */}
               </>
               {warningsByVar[inputVar] && warningsByVar[inputVar].length > 0 && (
                 <Box
