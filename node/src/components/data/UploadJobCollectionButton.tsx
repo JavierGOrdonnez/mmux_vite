@@ -126,7 +126,9 @@ export default function UploadJobCollectionButton(props: UploadJobCollectionButt
               newFunctionTitle: newFunctionTitle || undefined,
               sourceFunctionUid: sourceFunctionUid || undefined,
             });
-      const analysis = analyzeUploadedJobCollectionCsv(uploadCsvContent);
+      const analysis = analyzeUploadedJobCollectionCsv(uploadCsvContent, {
+        inferDistributionType: uploadMode === "new",
+      });
 
       if (onUploadSuccess) {
         await onUploadSuccess({
