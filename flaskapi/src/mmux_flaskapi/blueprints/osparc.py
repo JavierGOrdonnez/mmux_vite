@@ -1,5 +1,6 @@
 # Ensure imports before Blueprint usage
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
@@ -182,8 +183,6 @@ def _get_job_field_by_id(
     if osparc_api is None:
         raise ValueError(f"Cannot fetch job {job_uid}: oSPARC backend is not available")
     return fetch_remote_field(osparc_api, job_uid)
-
-
 def _get_query_arg(*names: str) -> str:
     """Return the first matching query argument from a list of compatible names."""
     for name in names:
