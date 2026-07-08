@@ -438,20 +438,32 @@ def flask_manual_uq_propagation_with_uncertainty():
         )
         from scipy.special import erfinv
 
-        # Set random seed for reproducibility
-        np.random.seed(seed)
+        # V27-consistent: use a seeded Generator instead of scipy/numpy global random state.
+        rng = np.random.default_rng(seed)
 
-        # Generate samples in transformed space
+        # yhat/std_hat come from the single evaluate_sumo() call above -- fixed set of
+        # `num_samples` (input, prediction) pairs. Per V28, each of the `n_histograms`
+        # realizations below bootstrap-resamples (with replacement) FROM THAT SET, instead of
+        # holding it fixed and only redrawing the epsilon noise. This makes `bin_stds` (the
+        # spread across realizations) a genuine finite-`num_samples` MC/bootstrap estimation
+        # error, rather than noise from repeatedly resampling the exact same fixed points --
+        # which trivially shrinks toward 0 as `num_samples` grows regardless of real uncertainty.
+        yhat = np.asarray(results[prediction_key], dtype=float)
+        std_hat = np.asarray(results[uncertainty_key], dtype=float)
+
+        # Generate samples in transformed space: one array WITH epistemic noise (used for the
+        # histograms/box-plot as before), one WITHOUT it (`bootstrap_idx` reused, r=0) used
+        # only to empirically decompose total variance (V29/V30, see below).
         all_results_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
+        input_only_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
         for i in range(n_histograms):
-            # Generate standard-normal samples via the inverse-CDF/erfinv trick: for U~Uniform(-1,1),
-            # sqrt(2)*erfinv(U) ~ N(0,1) (since Phi(x) = (1+erf(x/sqrt(2)))/2). The sqrt(2) factor is
-            # required -- erfinv(U) alone has std 1/sqrt(2) =~ 0.707, not 1, which would understate
-            # the injected uncertainty by ~29%.
+            bootstrap_idx = rng.integers(0, len(yhat), size=num_samples)
+            # Generate standard-normal samples from a uniform distribution via erfinv.
             r = np.sqrt(2) * erfinv(
-                np.random.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
+                rng.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
             )  # Avoid exact -1,1 for erfinv
-            all_results_transformed[i, :] = results[prediction_key] + r * results[uncertainty_key]
+            all_results_transformed[i, :] = yhat[bootstrap_idx] + r * std_hat[bootstrap_idx]
+            input_only_transformed[i, :] = yhat[bootstrap_idx]
 
         # Inverse transform results to original space for histogram calculation
         # Create a results dict with all samples for inverse transform
@@ -461,6 +473,26 @@ def flask_manual_uq_propagation_with_uncertainty():
 
         # Reshape back to (n_histograms, num_samples)
         all_values_reshaped = all_values.reshape(n_histograms, num_samples)
+
+        # V29/V30: empirical law-of-total-variance decomposition, Var(Y) = E_X[Var(Y|X)] +
+        # Var_X[E[Y|X]]. `input_only_transformed` (r=0, i.e. E[Y|X] samples, still paired with
+        # the SAME bootstrap draws as `all_results_transformed`) is inverse-transformed the same
+        # way so both variances are measured in ORIGINAL output space -- this stays correct
+        # under nonlinear/log-scale output transforms (V16), unlike a closed-form delta-method
+        # approximation. Subtracting per-point means (instead of fixing yhat at a single global
+        # mean) avoids a Jensen's-inequality bias under nonlinear transforms.
+        input_only_dict = {mapped_output_var: input_only_transformed.flatten().tolist()}
+        input_only_original = preprocessor.inverse_transform(input_only_dict)
+        input_only_values = np.array(input_only_original[output_response])
+
+        total_variance = float(np.var(all_values))
+        input_sampling_variance = float(np.var(input_only_values))
+        # E_X[Var(Y|X)]: the surrogate/epistemic floor. Reducible only by more/better surrogate
+        # training data, ⊥ by more UQ samples -- this is the quantity that must NOT shrink as
+        # `num_samples`/`n_histograms` grow (V29).
+        surrogate_uncertainty_variance = max(0.0, total_variance - input_sampling_variance)
+        surrogate_uncertainty_std = float(np.sqrt(surrogate_uncertainty_variance))
+        input_sampling_std = float(np.sqrt(input_sampling_variance))
 
         # Compute histogram statistics in original space
         _logger.debug("Computing histogram and statistical summaries in original space")
@@ -519,6 +551,8 @@ def flask_manual_uq_propagation_with_uncertainty():
             "std": float(np.std(all_values_flat)),
             "min": float(np.min(all_values_flat)),
             "max": float(np.max(all_values_flat)),
+            "surrogate_uncertainty_std": surrogate_uncertainty_std,
+            "input_sampling_std": input_sampling_std,
         }
 
         # Validate response using Pydantic

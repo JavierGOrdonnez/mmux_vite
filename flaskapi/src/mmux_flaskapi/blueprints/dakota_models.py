@@ -828,7 +828,13 @@ class UQWithUncertaintyResponse(BaseModel):
     bins_end: float = Field(..., description="End of histogram bin range")
     bin_means: list[float] = Field(..., description="Mean of bin heights across histograms")
     bin_stds: list[float] = Field(
-        ..., description="Standard deviation of bin heights across histograms"
+        ...,
+        description=(
+            "Standard deviation of bin heights across histograms. NEITHER epistemic nor "
+            "aleatoric: this is Monte-Carlo/bootstrap histogram-estimation noise. It legitimately "
+            "(but often misleadingly) shrinks toward 0 as num_samples/n_histograms grow -- unlike "
+            "surrogate_uncertainty_std, it is NOT a floor on total uncertainty (V29,V31)."
+        ),
     )
 
     # Box plot statistics
@@ -844,6 +850,24 @@ class UQWithUncertaintyResponse(BaseModel):
     std: float = Field(..., description="Overall standard deviation of all samples")
     min: float = Field(..., description="Minimum value across all samples")
     max: float = Field(..., description="Maximum value across all samples")
+
+    # Law-of-total-variance decomposition (V29,V30): Var(Y) = E_X[Var(Y|X)] + Var_X[E[Y|X]].
+    surrogate_uncertainty_std: float = Field(
+        ...,
+        description=(
+            "EPISTEMIC uncertainty (E_X[Var(Y|X)], the surrogate/GP predictive-variance floor). "
+            "Reducible only by more/better surrogate training data; must NOT shrink as "
+            "num_samples/n_histograms grow (V29)."
+        ),
+    )
+    input_sampling_std: float = Field(
+        ...,
+        description=(
+            "ALEATORIC uncertainty (Var_X[E[Y|X]], spread from the input distributions "
+            "themselves, as seen through the surrogate's mean prediction). Irreducible: "
+            "intrinsic to the chosen input distributions, not a numerical artifact (V30)."
+        ),
+    )
 
     @field_validator("bin_means", "bin_stds")
     @classmethod

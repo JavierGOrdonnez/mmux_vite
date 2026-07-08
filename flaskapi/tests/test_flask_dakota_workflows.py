@@ -1469,8 +1469,63 @@ class TestManualUQWithUncertainty:
         model (`evaluate_sumo`), not present in the raw training data. The endpoint must
         succeed with such realistic jobs, not reject them for "missing" a key that is
         never supposed to be there in the first place."""
+    def test_uq_uncertainty_floor_does_not_collapse_with_more_samples(self, test_client: Flask):
+        """V29/V30/B13 regression: the surrogate/epistemic floor (surrogateUncertaintyStd) must
+        NOT vanish as numSamples grows -- only the MC/bootstrap estimation noise (binStds, V28)
+        is expected to shrink. Before the fix, increasing numSamples collapsed ALL reported
+        uncertainty toward 0, hiding a potentially-large surrogate uncertainty floor."""
+        input_vars = ["x1", "x2"]
+        output = "y"
+        jobs = self.create_uq_uncertainty_jobs(50, input_vars, output)
+        distributions = self.create_distribution_dict(input_vars)
+
+        def run(num_samples: int, n_histograms: int) -> dict:
+            payload = {
+                "inputVars": input_vars,
+                "output": output,
+                "distributions": distributions,
+                "numSamples": num_samples,
+                "nHistograms": n_histograms,
+                "seed": 42,
+                "FunctionJobs": jobs,
+            }
+            response = test_client.post(
+                "/flask/dakota/manual_uq_propagation_with_uncertainty", json=payload
+            )
+            assert response.status_code == 200
+            return response.get_json()
+
+        low = run(num_samples=100, n_histograms=10)
+        high = run(num_samples=5000, n_histograms=10)
+
+        for data in (low, high):
+            assert "surrogateUncertaintyStd" in data
+            assert "inputSamplingStd" in data
+            assert data["surrogateUncertaintyStd"] >= 0
+            assert data["inputSamplingStd"] >= 0
+
+        # The epistemic floor must stay of the same order of magnitude -- it must not collapse
+        # toward 0 as numSamples grows 50x.
+        assert low["surrogateUncertaintyStd"] > 0
+        assert high["surrogateUncertaintyStd"] > 0.3 * low["surrogateUncertaintyStd"]
+
+        # binStds (pure MC/bootstrap estimation error) legitimately shrinks with more samples.
+        assert float(np.mean(high["binStds"])) < float(np.mean(low["binStds"]))
+
+    # ------------------- Validation Error Cases -------------------
+
+    def test_missing_uncertainty_output(self, test_client: Flask, monkeypatch):
+        """Test when the surrogate's evaluate_sumo() doesn't return `_std_hat` (V32/B14: the
+        request-level pre-check against raw FunctionJobs[].outputs was removed since real jobs
+        never carry a pre-existing `_std_hat` key; the only valid check is post-evaluate_sumo(),
+        against the surrogate's own computed results, matching V5)."""
         input_vars = ["x1"]
         output = "y"
+
+        def fake_evaluate_sumo(*args, **kwargs):
+            return {"y1_hat": [1.0] * 100}
+
+        monkeypatch.setattr("mmux_flaskapi.blueprints.dakota.evaluate_sumo", fake_evaluate_sumo)
 
         payload = {
             "inputVars": input_vars,
