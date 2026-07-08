@@ -40,6 +40,9 @@ type DataUQHistogramType = {
   std: number;
   min: number;
   max: number;
+  // Theorem-of-total-variance decomposition (Var(f(X)) = surrogateUncertaintyStd^2 + inputSamplingStd^2):
+  surrogateUncertaintyStd: number; // epistemic: surrogate/GP model uncertainty (lack of training data)
+  inputSamplingStd: number; // aleatoric: uncertainty from the input parameter distributions
 };
 
 type PlotConfig = {

@@ -68,6 +68,26 @@ export default function UncertainUQ(props: LoadingPropsType) {
               visible: true,
             },
           },
+          // Legend-only proxy traces: Plotly shapes (used below for the uncertainty bands) don't
+          // appear in the legend on their own, so these invisible markers give the bands a label.
+          {
+            x: [null],
+            y: [null],
+            type: "scatter",
+            mode: "markers",
+            marker: { color: theme.palette.secondary.main, opacity: 0.35, size: 14 },
+            name: "Total uncertainty (±1σ, parameter + surrogate model)",
+            hoverinfo: "skip",
+          },
+          {
+            x: [null],
+            y: [null],
+            type: "scatter",
+            mode: "markers",
+            marker: { color: theme.palette.primary.main, opacity: 0.35, size: 14 },
+            name: "Parameter uncertainty only (±1σ)",
+            hoverinfo: "skip",
+          },
         ];
         setPlotData(newPlotData);
         setDataUQHistogram(data); // now this is a dict w "mean_histogram" and "std_histogram" keys
@@ -78,7 +98,16 @@ export default function UncertainUQ(props: LoadingPropsType) {
         setDataUQHistogram(undefined);
       }
     })();
-  }, [filteredJobList, selectedQoI, numSamples, inputVars, distribution, selectedFunction, theme.palette.primary.main]);
+  }, [
+    filteredJobList,
+    selectedQoI,
+    numSamples,
+    inputVars,
+    distribution,
+    selectedFunction,
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+  ]);
   if (loading) {
     return <JobsLoading jobProgress={jobProgress} message="Creating AI model..." />;
   }
@@ -90,6 +119,40 @@ export default function UncertainUQ(props: LoadingPropsType) {
     plot_bgcolor: `${theme.palette.background.default}`,
     paper_bgcolor: `${theme.palette.background.default}`,
     font: { color: `${theme.palette.text.primary}` },
+    // Nested shaded bands around the mean: the wider (total) band is the full propagated
+    // uncertainty (parameter + surrogate model); the narrower (parameter-only) band shows how
+    // much of that total comes from the input parameter distributions alone. The gap between
+    // the two bands is the surrogate model's own (epistemic) contribution.
+    shapes: dataUQHistogram
+      ? [
+          {
+            type: "rect" as const,
+            xref: "x" as const,
+            yref: "paper" as const,
+            x0: dataUQHistogram.mean - dataUQHistogram.std,
+            x1: dataUQHistogram.mean + dataUQHistogram.std,
+            y0: 0,
+            y1: 1,
+            fillcolor: theme.palette.secondary.main,
+            opacity: 0.15,
+            line: { width: 0 },
+            layer: "below" as const,
+          },
+          {
+            type: "rect" as const,
+            xref: "x" as const,
+            yref: "paper" as const,
+            x0: dataUQHistogram.mean - dataUQHistogram.inputSamplingStd,
+            x1: dataUQHistogram.mean + dataUQHistogram.inputSamplingStd,
+            y0: 0,
+            y1: 1,
+            fillcolor: theme.palette.primary.main,
+            opacity: 0.15,
+            line: { width: 0 },
+            layer: "below" as const,
+          },
+        ]
+      : [],
   };
   const plotStyle = {
     width: "100%",
