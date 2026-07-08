@@ -6,8 +6,10 @@ repos:
       - id: ruff
         args: [--fix]
         files: ^flaskapi/
+        exclude: ^flaskapi/mmux_python/
       - id: ruff-format
         files: ^flaskapi/
+        exclude: ^flaskapi/mmux_python/
 
   # General file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
