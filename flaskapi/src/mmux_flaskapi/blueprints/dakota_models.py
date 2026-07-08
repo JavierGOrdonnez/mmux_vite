@@ -851,21 +851,24 @@ class UQWithUncertaintyResponse(BaseModel):
     min: float = Field(..., description="Minimum value across all samples")
     max: float = Field(..., description="Maximum value across all samples")
 
-    # Law-of-total-variance decomposition (V29,V30): Var(Y) = E_X[Var(Y|X)] + Var_X[E[Y|X]].
+    # Law-of-total-variance decomposition (V29,V30): Var(f(X)) = E_X[s^2(X)] + Var(m(X)),
+    # where m(X)/s(X) are the surrogate's own predictive mean/std (theorem of total variance).
     surrogate_uncertainty_std: float = Field(
         ...,
         description=(
-            "EPISTEMIC uncertainty (E_X[Var(Y|X)], the surrogate/GP predictive-variance floor). "
-            "Reducible only by more/better surrogate training data; must NOT shrink as "
+            "EPISTEMIC uncertainty: sqrt(E_X[s(X)^2]), the 'expected surrogate variation' -- "
+            "associated with the surrogate model itself / lack of knowledge far from training "
+            "data. Reducible only by more/better surrogate training data; must NOT shrink as "
             "num_samples/n_histograms grow (V29)."
         ),
     )
     input_sampling_std: float = Field(
         ...,
         description=(
-            "ALEATORIC uncertainty (Var_X[E[Y|X]], spread from the input distributions "
-            "themselves, as seen through the surrogate's mean prediction). Irreducible: "
-            "intrinsic to the chosen input distributions, not a numerical artifact (V30)."
+            "ALEATORIC uncertainty: sqrt(Var_X[m(X)]), the 'variation of surrogate expectation' "
+            "-- associated with the uncertainty of the material/input parameters themselves. "
+            "Irreducible: intrinsic to the chosen input distributions, not a numerical artifact "
+            "(V30)."
         ),
     )
 
