@@ -396,6 +396,183 @@ def flask_sumo_cross_validation():
         handle_workflow_error(e, "flask_sumo_cross_validation", 500)
 
 
+def _run_manual_uq_with_uncertainty(
+    validated_request: ManualUQWithUncertaintyRequest,
+) -> tuple[dict, pd.DataFrame, np.ndarray]:
+    """
+    Core computation shared by the JSON histogram endpoint and the raw-samples CSV
+    download endpoint: generates UQ input samples, evaluates the surrogate model with
+    uncertainty, and derives `n_histograms` noisy realizations of the output in
+    original variable space.
+
+    Returns (response_data, df_samples, all_values_reshaped):
+      - response_data: dict of histogram/box-plot/overall statistics (unvalidated)
+      - df_samples: the generated INPUT samples in original space (num_samples rows)
+      - all_values_reshaped: the raw propagated OUTPUT samples, shape
+        (n_histograms, num_samples), in original space
+    """
+    _logger.debug(
+        f"Request validation successful. Processing {len(validated_request.function_jobs)} jobs"
+    )
+
+    # Extract validated parameters
+    output_response = validated_request.output
+    input_vars = validated_request.input_vars
+    distributions = validated_request.distributions
+    num_samples = validated_request.num_samples
+    jobs = validated_request.function_jobs
+    n_histograms = validated_request.n_histograms
+    seed = validated_request.seed
+    log_scaled_inputs = _log_scaled_inputs_from_distributions(distributions)
+
+    # Create run directory
+    run_dir = create_run_dir(DAKOTA_RUNS_DIR, "uq_with_uncertainty")
+
+    # Use DataPreprocessor for standardized data handling
+    PROCESSED_TRAINING_FILE, preprocessor = setup_preprocessor_for_workflow(
+        jobs=jobs,
+        input_vars=input_vars,
+        output_vars=[output_response],
+        run_dir=run_dir,
+        input_log_scales=log_scaled_inputs or None,
+    )
+
+    # Get mapped variable names
+    mapped_input_vars = [preprocessor.input_variables[var].mapped_name for var in input_vars]
+    mapped_output_var = preprocessor.output_variables[output_response].mapped_name
+
+    # Generate UQ samples using provided distributions
+    _logger.debug(f"Generating {num_samples} UQ samples with seed {seed}")
+    # Convert Pydantic models to dict format expected by create_manual_uq_samples
+    distributions_dict = {var: dist.model_dump() for var, dist in distributions.items()}
+    samples = create_manual_uq_samples(input_vars, distributions_dict, num_samples, seed)
+    df_samples = pd.DataFrame(samples)
+    UQ_SAMPLES_FILE = run_dir / "manual_uq_samples.csv"
+    df_samples.to_csv(UQ_SAMPLES_FILE, index=False)
+    _logger.debug(f"Generated manual UQ samples saved to {UQ_SAMPLES_FILE}")
+
+    df_samples_transformed = preprocessor.transform(df_samples)
+    PROCESSED_UQ_SAMPLES_FILE = run_dir / "manual_uq_samples_processed.csv"
+    df_samples_transformed.to_csv(PROCESSED_UQ_SAMPLES_FILE, sep=" ", index=False)
+
+    # Evaluate surrogate model on UQ samples
+    _logger.debug("Evaluating surrogate model on UQ samples")
+    results = evaluate_sumo(
+        run_dir,
+        PROCESSED_TRAINING_FILE,
+        PROCESSED_UQ_SAMPLES_FILE,
+        mapped_input_vars,
+        mapped_output_var,
+    )
+
+    # Verify uncertainty predictions are available
+    uncertainty_key = mapped_output_var + "_std_hat"
+    prediction_key = mapped_output_var + "_hat"
+
+    if uncertainty_key not in results:
+        available_keys = list(results.keys())
+        raise ValueError(
+            f"Cannot perform uncertainty quantification without '{uncertainty_key}' predictions. "
+            f"Available result keys: {available_keys}. "
+            f"Ensure the surrogate model was trained to predict uncertainty."
+        )
+
+    if prediction_key not in results:
+        available_keys = list(results.keys())
+        raise ValueError(
+            f"Cannot perform uncertainty quantification without '{prediction_key}' predictions. "
+            f"Available result keys: {available_keys}."
+        )
+
+    _logger.debug(f"Found required predictions: {prediction_key} and {uncertainty_key}")
+
+    # Perform uncertainty propagation using error function inverse
+    _logger.debug(
+        f"Generating {n_histograms} histogram realizations for uncertainty quantification"
+    )
+    from scipy.special import erfinv  # type: ignore
+
+    # Set random seed for reproducibility
+    np.random.seed(seed)
+
+    # Generate samples in transformed space
+    all_results_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
+    for i in range(n_histograms):
+        # Generate random samples from uniform distribution and transform via erfinv
+        r = erfinv(
+            np.random.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
+        )  # Avoid exact -1,1 for erfinv
+        all_results_transformed[i, :] = results[prediction_key] + r * results[uncertainty_key]
+
+    # Inverse transform results to original space for histogram calculation
+    # Create a results dict with all samples for inverse transform
+    all_samples_dict = {mapped_output_var: all_results_transformed.flatten().tolist()}
+    all_samples_original = preprocessor.inverse_transform(all_samples_dict)
+    all_values = np.array(all_samples_original[output_response])
+
+    # Reshape back to (n_histograms, num_samples)
+    all_values_reshaped = all_values.reshape(n_histograms, num_samples)
+
+    # Compute histogram statistics in original space
+    _logger.debug("Computing histogram and statistical summaries in original space")
+    all_values_flat = all_values.flatten()
+    num_bins = min(50, max(10, num_samples // 10))  # Ensure reasonable number of bins
+    hist_min, hist_max = np.percentile(all_values_flat, 1), np.percentile(all_values_flat, 99)
+
+    # Handle edge case where hist_min == hist_max
+    if hist_min == hist_max:
+        hist_range = max(1e-10, abs(hist_min) * 1e-6)  # Small range around the value
+        hist_min -= hist_range
+        hist_max += hist_range
+
+    bin_edges = np.linspace(hist_min, hist_max, num_bins + 1)
+
+    # Compute histograms for each realization
+    histograms = np.array(
+        [
+            np.histogram(all_values_reshaped[i, :], bins=bin_edges, density=True)[0]
+            for i in range(n_histograms)
+        ]
+    )
+
+    # Calculate statistics across histogram realizations
+    bin_means = np.mean(histograms, axis=0)
+    bin_stds = np.std(histograms, axis=0)
+
+    # Calculate box plot quantities
+    q1 = np.percentile(all_values_flat, 25)
+    median = np.percentile(all_values_flat, 50)
+    q3 = np.percentile(all_values_flat, 75)
+    iqr = q3 - q1
+
+    # Calculate whisker boundaries (1.5 * IQR rule)
+    whisker_min = max(hist_min, q1 - 1.5 * iqr)
+    whisker_max = min(hist_max, q3 + 1.5 * iqr)
+
+    # Identify outliers
+    outliers = all_values_flat[(all_values_flat < whisker_min) | (all_values_flat > whisker_max)]
+
+    # Create response object
+    response_data = {
+        "bins_start": float(hist_min),
+        "bins_end": float(hist_max),
+        "bin_means": bin_means.tolist(),
+        "bin_stds": bin_stds.tolist(),
+        "q1": float(q1),
+        "median": float(median),
+        "q3": float(q3),
+        "whisker_min": float(whisker_min),
+        "whisker_max": float(whisker_max),
+        "outliers": outliers.tolist(),
+        "mean": float(np.mean(all_values_flat)),
+        "std": float(np.std(all_values_flat)),
+        "min": float(np.min(all_values_flat)),
+        "max": float(np.max(all_values_flat)),
+    }
+
+    return response_data, df_samples, all_values_reshaped
+
+
 @dakota_bp.route("/manual_uq_propagation_with_uncertainty", methods=["POST"])
 def flask_manual_uq_propagation_with_uncertainty():
     """
@@ -413,166 +590,9 @@ def flask_manual_uq_propagation_with_uncertainty():
     validated_request = parse_request_model(ManualUQWithUncertaintyRequest)
 
     try:
-        _logger.debug(
-            f"Request validation successful. Processing {len(validated_request.function_jobs)} jobs"
+        response_data, _df_samples, _all_values_reshaped = _run_manual_uq_with_uncertainty(
+            validated_request
         )
-
-        # Extract validated parameters
-        output_response = validated_request.output
-        input_vars = validated_request.input_vars
-        distributions = validated_request.distributions
-        num_samples = validated_request.num_samples
-        jobs = validated_request.function_jobs
-        n_histograms = validated_request.n_histograms
-        seed = validated_request.seed
-        log_scaled_inputs = _log_scaled_inputs_from_distributions(distributions)
-
-        # Create run directory
-        run_dir = create_run_dir(DAKOTA_RUNS_DIR, "uq_with_uncertainty")
-
-        # Use DataPreprocessor for standardized data handling
-        PROCESSED_TRAINING_FILE, preprocessor = setup_preprocessor_for_workflow(
-            jobs=jobs,
-            input_vars=input_vars,
-            output_vars=[output_response],
-            run_dir=run_dir,
-            input_log_scales=log_scaled_inputs or None,
-        )
-
-        # Get mapped variable names
-        mapped_input_vars = [preprocessor.input_variables[var].mapped_name for var in input_vars]
-        mapped_output_var = preprocessor.output_variables[output_response].mapped_name
-
-        # Generate UQ samples using provided distributions
-        _logger.debug(f"Generating {num_samples} UQ samples with seed {seed}")
-        # Convert Pydantic models to dict format expected by create_manual_uq_samples
-        distributions_dict = {var: dist.model_dump() for var, dist in distributions.items()}
-        samples = create_manual_uq_samples(input_vars, distributions_dict, num_samples, seed)
-        df_samples = pd.DataFrame(samples)
-        UQ_SAMPLES_FILE = run_dir / "manual_uq_samples.csv"
-        df_samples.to_csv(UQ_SAMPLES_FILE, index=False)
-        _logger.debug(f"Generated manual UQ samples saved to {UQ_SAMPLES_FILE}")
-
-        df_samples_transformed = preprocessor.transform(df_samples)
-        PROCESSED_UQ_SAMPLES_FILE = run_dir / "manual_uq_samples_processed.csv"
-        df_samples_transformed.to_csv(PROCESSED_UQ_SAMPLES_FILE, sep=" ", index=False)
-
-        # Evaluate surrogate model on UQ samples
-        _logger.debug("Evaluating surrogate model on UQ samples")
-        results = evaluate_sumo(
-            run_dir,
-            PROCESSED_TRAINING_FILE,
-            PROCESSED_UQ_SAMPLES_FILE,
-            mapped_input_vars,
-            mapped_output_var,
-        )
-
-        # Verify uncertainty predictions are available
-        uncertainty_key = mapped_output_var + "_std_hat"
-        prediction_key = mapped_output_var + "_hat"
-
-        if uncertainty_key not in results:
-            available_keys = list(results.keys())
-            raise ValueError(
-                f"Cannot perform uncertainty quantification without '{uncertainty_key}' predictions. "
-                f"Available result keys: {available_keys}. "
-                f"Ensure the surrogate model was trained to predict uncertainty."
-            )
-
-        if prediction_key not in results:
-            available_keys = list(results.keys())
-            raise ValueError(
-                f"Cannot perform uncertainty quantification without '{prediction_key}' predictions. "
-                f"Available result keys: {available_keys}."
-            )
-
-        _logger.debug(f"Found required predictions: {prediction_key} and {uncertainty_key}")
-
-        # Perform uncertainty propagation using error function inverse
-        _logger.debug(
-            f"Generating {n_histograms} histogram realizations for uncertainty quantification"
-        )
-        from scipy.special import erfinv  # type: ignore
-
-        # Set random seed for reproducibility
-        np.random.seed(seed)
-
-        # Generate samples in transformed space
-        all_results_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
-        for i in range(n_histograms):
-            # Generate random samples from uniform distribution and transform via erfinv
-            r = erfinv(
-                np.random.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
-            )  # Avoid exact -1,1 for erfinv
-            all_results_transformed[i, :] = results[prediction_key] + r * results[uncertainty_key]
-
-        # Inverse transform results to original space for histogram calculation
-        # Create a results dict with all samples for inverse transform
-        all_samples_dict = {mapped_output_var: all_results_transformed.flatten().tolist()}
-        all_samples_original = preprocessor.inverse_transform(all_samples_dict)
-        all_values = np.array(all_samples_original[output_response])
-
-        # Reshape back to (n_histograms, num_samples)
-        all_values_reshaped = all_values.reshape(n_histograms, num_samples)
-
-        # Compute histogram statistics in original space
-        _logger.debug("Computing histogram and statistical summaries in original space")
-        all_values_flat = all_values.flatten()
-        num_bins = min(50, max(10, num_samples // 10))  # Ensure reasonable number of bins
-        hist_min, hist_max = np.percentile(all_values_flat, 1), np.percentile(all_values_flat, 99)
-
-        # Handle edge case where hist_min == hist_max
-        if hist_min == hist_max:
-            hist_range = max(1e-10, abs(hist_min) * 1e-6)  # Small range around the value
-            hist_min -= hist_range
-            hist_max += hist_range
-
-        bin_edges = np.linspace(hist_min, hist_max, num_bins + 1)
-
-        # Compute histograms for each realization
-        histograms = np.array(
-            [
-                np.histogram(all_values_reshaped[i, :], bins=bin_edges, density=True)[0]
-                for i in range(n_histograms)
-            ]
-        )
-
-        # Calculate statistics across histogram realizations
-        bin_means = np.mean(histograms, axis=0)
-        bin_stds = np.std(histograms, axis=0)
-
-        # Calculate box plot quantities
-        q1 = np.percentile(all_values_flat, 25)
-        median = np.percentile(all_values_flat, 50)
-        q3 = np.percentile(all_values_flat, 75)
-        iqr = q3 - q1
-
-        # Calculate whisker boundaries (1.5 * IQR rule)
-        whisker_min = max(hist_min, q1 - 1.5 * iqr)
-        whisker_max = min(hist_max, q3 + 1.5 * iqr)
-
-        # Identify outliers
-        outliers = all_values_flat[
-            (all_values_flat < whisker_min) | (all_values_flat > whisker_max)
-        ]
-
-        # Create response object
-        response_data = {
-            "bins_start": float(hist_min),
-            "bins_end": float(hist_max),
-            "bin_means": bin_means.tolist(),
-            "bin_stds": bin_stds.tolist(),
-            "q1": float(q1),
-            "median": float(median),
-            "q3": float(q3),
-            "whisker_min": float(whisker_min),
-            "whisker_max": float(whisker_max),
-            "outliers": outliers.tolist(),
-            "mean": float(np.mean(all_values_flat)),
-            "std": float(np.std(all_values_flat)),
-            "min": float(np.min(all_values_flat)),
-            "max": float(np.max(all_values_flat)),
-        }
 
         # Validate response using Pydantic
         validated_response = UQWithUncertaintyResponse(**response_data)
@@ -586,6 +606,53 @@ def flask_manual_uq_propagation_with_uncertainty():
         handle_workflow_error(e, "flask_manual_uq_propagation_with_uncertainty", 400)
     except Exception as e:
         handle_workflow_error(e, "flask_manual_uq_propagation_with_uncertainty", 500)
+
+
+@dakota_bp.route("/download_uq_propagation_csv", methods=["POST"])
+def flask_download_uq_propagation_csv():
+    """
+    Recompute the manual UQ propagation with uncertainty (same request body/seed as
+    /manual_uq_propagation_with_uncertainty, so results match exactly) and return the
+    raw propagated samples as a downloadable CSV instead of binned histogram stats.
+
+    CSV shape: one row per generated input sample (`num_samples` rows), with
+    `input__<var>` columns (shared across all histogram realizations) followed by
+    `output__<output>__realization_<i>` columns (one per histogram realization).
+    """
+    _logger.debug("Starting flask function: flask_download_uq_propagation_csv")
+    _logger.debug("Cwd: " + str(Path.cwd()))
+
+    validated_request = parse_request_model(ManualUQWithUncertaintyRequest)
+
+    try:
+        _, df_samples, all_values_reshaped = _run_manual_uq_with_uncertainty(validated_request)
+
+        output_response = validated_request.output
+        n_histograms = validated_request.n_histograms
+
+        # Use df_samples' own columns (not validated_request.input_vars) since
+        # create_manual_uq_samples() sanitizes variable names internally -- indexing by
+        # the original (unsanitized) names could KeyError if they ever differ.
+        csv_columns = {f"input__{var}": df_samples[var] for var in df_samples.columns}
+        for i in range(n_histograms):
+            csv_columns[f"output__{output_response}__realization_{i}"] = all_values_reshaped[i, :]
+        csv_df = pd.DataFrame(csv_columns)
+
+        csv_text = csv_df.to_csv(index=False)
+        _logger.debug("UQ propagation CSV download prepared successfully")
+
+        filename = f"uq_propagation_{output_response}.csv"
+        response = make_response(csv_text)
+        response.headers["Content-Type"] = "text/csv"
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    except ValidationError as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 400)
+    except ValueError as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 400)
+    except Exception as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 500)
 
 
 @dakota_bp.route("/sumo_along_axes", methods=["POST"])

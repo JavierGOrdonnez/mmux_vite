@@ -1887,6 +1887,114 @@ class TestManualUQWithUncertainty:
     #     assert isinstance(data, dict)
 
 
+class TestDownloadUqPropagationCsv:
+    """Test suite for the /dakota/download_uq_propagation_csv endpoint.
+
+    Duplicates the small payload-building helpers from TestManualUQWithUncertainty
+    (not inherited, to avoid pytest re-collecting/re-running the parent's test
+    methods under this class too).
+    """
+
+    def create_uq_uncertainty_jobs(self, n: int, input_vars: list[str], output: str) -> list[dict]:
+        """Create function jobs with both predicted output and uncertainty estimation."""
+        jobs = []
+        for _ in range(n):
+            job = {
+                "status": "completed",
+                "inputs": {var: np.random.uniform(-1, 1) for var in input_vars},
+                "outputs": {
+                    output: np.random.uniform(0, 10),
+                    f"{output}_std_hat": np.random.uniform(0.1, 2.0),
+                },
+            }
+            jobs.append(job)
+        return jobs
+
+    def create_distribution_dict(self, input_vars: list[str]) -> dict:
+        """Create distributions dictionary for given input variables."""
+        return {
+            var: {"distribution": "normal", "mean": 0.0, "std": 1.0, "min": -3.0, "max": 3.0}
+            for var in input_vars
+        }
+
+    def test_download_csv_success_shape(self, test_client: Flask):
+        """Valid request returns a CSV with the expected columns/rows."""
+        input_vars = ["x1", "x2"]
+        output = "y"
+        num_samples = 100
+        n_histograms = 10
+
+        payload = {
+            "inputVars": input_vars,
+            "output": output,
+            "distributions": self.create_distribution_dict(input_vars),
+            "numSamples": num_samples,
+            "nHistograms": n_histograms,
+            "seed": 42,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(50, input_vars, output),
+        }
+
+        response = test_client.post("/flask/dakota/download_uq_propagation_csv", json=payload)
+        assert response.status_code == 200
+        assert response.mimetype == "text/csv"
+        assert "attachment" in response.headers["Content-Disposition"]
+        assert "uq_propagation_y.csv" in response.headers["Content-Disposition"]
+
+        csv_text = response.get_data(as_text=True)
+        rows = [line for line in csv_text.splitlines() if line.strip()]
+        header = rows[0].split(",")
+
+        expected_input_columns = {f"input__{var}" for var in input_vars}
+        expected_output_columns = {
+            f"output__{output}__realization_{i}" for i in range(n_histograms)
+        }
+        assert set(header) == expected_input_columns | expected_output_columns
+        assert len(header) == len(input_vars) + n_histograms
+        # header + num_samples data rows
+        assert len(rows) == num_samples + 1
+
+    def test_download_csv_deterministic_for_same_seed(self, test_client: Flask):
+        """Same request body/seed reproduces a byte-identical CSV (no persisted state needed)."""
+        input_vars = ["x1"]
+        output = "y"
+
+        payload = {
+            "inputVars": input_vars,
+            "output": output,
+            "distributions": self.create_distribution_dict(input_vars),
+            "numSamples": 50,
+            "nHistograms": 5,
+            "seed": 7,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(20, input_vars, output),
+        }
+
+        response1 = test_client.post("/flask/dakota/download_uq_propagation_csv", json=payload)
+        response2 = test_client.post("/flask/dakota/download_uq_propagation_csv", json=payload)
+        assert response1.status_code == 200
+        assert response2.status_code == 200
+        assert response1.get_data(as_text=True) == response2.get_data(as_text=True)
+
+    def test_download_csv_invalid_n_histograms_zero(self, test_client: Flask):
+        """Same validation as the JSON endpoint: invalid nHistograms -> 400."""
+        input_vars = ["x1"]
+        output = "y"
+
+        payload = {
+            "inputVars": input_vars,
+            "output": output,
+            "distributions": self.create_distribution_dict(input_vars),
+            "numSamples": 100,
+            "nHistograms": 0,  # Invalid
+            "seed": 42,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(50, input_vars, output),
+        }
+
+        response = test_client.post("/flask/dakota/download_uq_propagation_csv", json=payload)
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "error" in data
+
+
 # ------------------- SUMO CV Accuracy Metrics Tests -------------------
 
 

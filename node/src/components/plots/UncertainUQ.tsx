@@ -1,10 +1,13 @@
-import { Box, useTheme } from "@mui/material";
-import { useEffect, useState } from "react";
+import { Box, Button, useTheme } from "@mui/material";
+import { useEffect, useRef, useState } from "react";
 import Plot from "react-plotly.js";
+import { toast } from "react-toastify";
 import { useFunctionContext } from "../../context/FunctionContext";
 import { useJobContext } from "../../context/JobContext";
 import { useMMUXContext } from "../../context/MMUXContext";
+import { downloadUqPropagationCsv, ManualUqPropagationRequestBody } from "../../utils/functionUtils";
 import { fetchWithRetry } from "../../utils/fetchRetry";
+import { triggerBlobDownload } from "../../utils/downloadBlob";
 import { JobsLoading } from "../data/JobsLoading";
 import CalculatingWarning from "./CalculatingWarning";
 import HistogramStats from "./HistogramStats";
@@ -26,6 +29,11 @@ export default function UncertainUQ(props: LoadingPropsType) {
   const [plotData, setPlotData] = useState<Plotly.Data[]>([]);
   const [propagating, setPropagating] = useState(false);
   const [calculationError, setCalculationError] = useState<string>();
+  const [downloading, setDownloading] = useState(false);
+  // Captures the exact request body of the last *successful* histogram fetch, so
+  // "Download CSV" always returns samples matching what's currently plotted, even if
+  // the user tweaks distributions/numSamples afterward without re-running.
+  const lastRequestBodyRef = useRef<ManualUqPropagationRequestBody | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -47,19 +55,20 @@ export default function UncertainUQ(props: LoadingPropsType) {
       try {
         console.info("Propagating UQ...");
         console.info("SelectedQoI: ", selectedQoI);
+        const requestBody: ManualUqPropagationRequestBody = {
+          inputVars,
+          output: selectedQoI,
+          distributions: distribution[selectedFunction?.uid || ""],
+          FunctionJobs: filteredJobList,
+          numSamples: numSamples[selectedFunction?.uid || ""] || 10000,
+          log: false,
+          nHistograms: 50,
+          seed: 0,
+        };
         const response = await fetchWithRetry(`/flask/dakota/manual_uq_propagation_with_uncertainty`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            inputVars,
-            output: selectedQoI,
-            distributions: distribution[selectedFunction?.uid || ""],
-            FunctionJobs: filteredJobList,
-            numSamples: numSamples[selectedFunction?.uid || ""] || 10000,
-            log: false,
-            nHistograms: 50,
-            seed: 0,
-          }),
+          body: JSON.stringify(requestBody),
         });
         if (!response.ok) {
           let errorMessage = `Error in UQ response: ${response.status}, ${response.statusText}`;
@@ -100,15 +109,33 @@ export default function UncertainUQ(props: LoadingPropsType) {
         ];
         setPlotData(newPlotData);
         setDataUQHistogram(data); // now this is a dict w "mean_histogram" and "std_histogram" keys
+        lastRequestBodyRef.current = requestBody;
         setPropagating(false);
       } catch (error) {
         console.warn("Error:", error);
         setPropagating(false);
         setDataUQHistogram(undefined);
         setCalculationError(error instanceof Error ? error.message : "Error during calculation, please contact support.");
+        lastRequestBodyRef.current = null;
       }
     })();
   }, [filteredJobList, selectedQoI, numSamples, inputVars, distribution, selectedFunction, theme.palette.primary.main]);
+
+  const handleDownloadCsv = async () => {
+    if (!lastRequestBodyRef.current) return;
+    try {
+      setDownloading(true);
+      const { blob, filename } = await downloadUqPropagationCsv(lastRequestBodyRef.current);
+      triggerBlobDownload(blob, filename);
+      toast.success(`Downloaded ${filename}.`);
+    } catch (error) {
+      console.error(error);
+      toast.error((error as Error).message || "Failed to download UQ propagation CSV.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (loading) {
     return <JobsLoading jobProgress={jobProgress} message="Creating AI model..." />;
   }
@@ -141,6 +168,17 @@ export default function UncertainUQ(props: LoadingPropsType) {
       )}
       {!propagating && plotData.length !== 0 && <Plot data={plotData} layout={layout} style={plotStyle} />}
       {dataUQHistogram !== undefined && <HistogramStats {...dataUQHistogram} />}
+      {dataUQHistogram !== undefined && (
+        <Button
+          variant="outlined"
+          size="small"
+          disabled={propagating || downloading || lastRequestBodyRef.current === null}
+          onClick={handleDownloadCsv}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          {downloading ? "Downloading..." : "Download CSV"}
+        </Button>
+      )}
     </Box>
   );
 }

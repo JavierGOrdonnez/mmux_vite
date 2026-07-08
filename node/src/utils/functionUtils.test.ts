@@ -4,6 +4,7 @@ import {
   createInputOutputSchema,
   createJobStudyCopy,
   downloadJobCollectionCsv,
+  downloadUqPropagationCsv,
   getFunctionJobCollections,
   getFunctionJobsFromFunctionJobCollection,
   getFunctionJobsFromFunctionUid,
@@ -304,5 +305,88 @@ describe("Function Utils", () => {
         targetFunctionUid: "func1",
       }),
     ).rejects.toThrow("boom");
+  });
+
+  it("should download the UQ propagation CSV as a blob, reading the filename from Content-Disposition", async () => {
+    const csvBlob = new Blob(["input__x1,output__y__realization_0\n0.1,5.2\n"]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          headers: {
+            get: (name: string) => (name === "Content-Disposition" ? 'attachment; filename="uq_propagation_y.csv"' : null),
+          },
+          blob: () => Promise.resolve(csvBlob),
+        }),
+      ),
+    );
+
+    const result = await downloadUqPropagationCsv({
+      inputVars: ["x1"],
+      output: "y",
+      distributions: {},
+      FunctionJobs: [],
+      numSamples: 100,
+      log: false,
+      nHistograms: 10,
+      seed: 0,
+    });
+
+    expect(fetch).toHaveBeenCalledWith("/flask/dakota/download_uq_propagation_csv", expect.objectContaining({ method: "POST" }));
+    expect(result).toEqual({ blob: csvBlob, filename: "uq_propagation_y.csv" });
+  });
+
+  it("should fall back to a default filename when Content-Disposition is missing", async () => {
+    const csvBlob = new Blob(["data"]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          blob: () => Promise.resolve(csvBlob),
+        }),
+      ),
+    );
+
+    const result = await downloadUqPropagationCsv({
+      inputVars: ["x1"],
+      output: "y",
+      distributions: {},
+      FunctionJobs: [],
+      numSamples: 100,
+      log: false,
+      nHistograms: 10,
+      seed: 0,
+    });
+
+    expect(result.filename).toBe("uq_propagation.csv");
+  });
+
+  it("should throw with the server error message when the CSV download fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          statusText: "Bad Request",
+          json: () => Promise.resolve({ error: "At least 5 completed jobs are required" }),
+        }),
+      ),
+    );
+
+    await expect(
+      downloadUqPropagationCsv({
+        inputVars: ["x1"],
+        output: "y",
+        distributions: {},
+        FunctionJobs: [],
+        numSamples: 100,
+        log: false,
+        nHistograms: 10,
+        seed: 0,
+      }),
+    ).rejects.toThrow("At least 5 completed jobs are required");
   });
 });
