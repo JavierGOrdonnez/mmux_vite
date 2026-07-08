@@ -346,6 +346,67 @@ def flask_sumo_cross_validation():
         handle_workflow_error(e, "flask_sumo_cross_validation", 500)
 
 
+def _run_manual_uq_with_uncertainty(
+    validated_request: ManualUQWithUncertaintyRequest,
+) -> tuple[dict, pd.DataFrame, np.ndarray]:
+    """Generate input samples and uncertainty-propagated output realizations."""
+    output_response = validated_request.output
+    input_vars = validated_request.input_vars
+    distributions = validated_request.distributions
+    num_samples = validated_request.num_samples
+    jobs = validated_request.function_jobs
+    n_histograms = validated_request.n_histograms
+    seed = validated_request.seed
+
+    run_dir = create_run_dir(DAKOTA_RUNS_DIR, "uq_with_uncertainty")
+    processed_training_file, preprocessor = setup_preprocessor_for_workflow(
+        jobs=jobs, input_vars=input_vars, output_vars=[output_response], run_dir=run_dir
+    )
+    mapped_input_vars = [preprocessor.input_variables[var].mapped_name for var in input_vars]
+    mapped_output_var = preprocessor.output_variables[output_response].mapped_name
+
+    distributions_dict = {var: dist.model_dump() for var, dist in distributions.items()}
+    samples = create_manual_uq_samples(input_vars, distributions_dict, num_samples, seed)
+    df_samples = pd.DataFrame(samples)
+    df_samples.to_csv(run_dir / "manual_uq_samples.csv", index=False)
+
+    processed_samples_file = run_dir / "manual_uq_samples_processed.csv"
+    preprocessor.transform(df_samples).to_csv(processed_samples_file, sep=" ", index=False)
+    results = evaluate_sumo(
+        run_dir,
+        processed_training_file,
+        processed_samples_file,
+        mapped_input_vars,
+        mapped_output_var,
+    )
+
+    uncertainty_key = f"{mapped_output_var}_std_hat"
+    prediction_key = f"{mapped_output_var}_hat"
+    if uncertainty_key not in results or prediction_key not in results:
+        raise ValueError(
+            f"Cannot perform uncertainty quantification without '{prediction_key}' and "
+            f"'{uncertainty_key}' predictions. Available result keys: {list(results.keys())}."
+        )
+
+    from scipy.special import erfinv
+
+    np.random.seed(seed)
+    all_results_transformed = np.empty((n_histograms, num_samples), dtype=float)
+    for index in range(n_histograms):
+        random_values = np.sqrt(2) * erfinv(
+            np.random.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
+        )
+        all_results_transformed[index, :] = (
+            results[prediction_key] + random_values * results[uncertainty_key]
+        )
+
+    all_samples_original = preprocessor.inverse_transform(
+        {mapped_output_var: all_results_transformed.flatten().tolist()}
+    )
+    all_values = np.asarray(all_samples_original[output_response])
+    return {}, df_samples, all_values.reshape(n_histograms, num_samples)
+
+
 @dakota_bp.route("/manual_uq_propagation_with_uncertainty", methods=["POST"])
 def flask_manual_uq_propagation_with_uncertainty():
     """
@@ -695,6 +756,50 @@ def flask_compute_sobol_indices():
         handle_workflow_error(e, "flask_compute_sobol_indices", 400)
     except Exception as e:
         handle_workflow_error(e, "flask_compute_sobol_indices", 500)
+
+
+@dakota_bp.route("/download_uq_propagation_csv", methods=["POST"])
+def flask_download_uq_propagation_csv():
+    """
+    Recompute the manual UQ propagation with uncertainty (same request body/seed as
+    /manual_uq_propagation_with_uncertainty, so results match exactly) and return the
+    raw propagated samples as a downloadable CSV instead of binned histogram stats.
+
+    CSV shape: one row per generated input sample (`num_samples` rows), with
+    `input__<var>` columns (shared across all histogram realizations) followed by
+    `output__<output>__realization_<i>` columns (one per histogram realization).
+    """
+    _logger.debug("Starting flask function: flask_download_uq_propagation_csv")
+    _logger.debug("Cwd: " + str(Path.cwd()))
+
+    validated_request = parse_request_model(ManualUQWithUncertaintyRequest)
+
+    try:
+        _, df_samples, all_values_reshaped = _run_manual_uq_with_uncertainty(validated_request)
+
+        output_response = validated_request.output
+        n_histograms = validated_request.n_histograms
+
+        csv_columns = {f"input__{var}": df_samples[var] for var in df_samples.columns}
+        for i in range(n_histograms):
+            csv_columns[f"output__{output_response}__realization_{i}"] = all_values_reshaped[i, :]
+        csv_df = pd.DataFrame(csv_columns)
+
+        csv_text = csv_df.to_csv(index=False)
+        _logger.debug("UQ propagation CSV download prepared successfully")
+
+        filename = f"uq_propagation_{output_response}.csv"
+        response = make_response(csv_text)
+        response.headers["Content-Type"] = "text/csv"
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    except ValidationError as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 400)
+    except ValueError as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 400)
+    except Exception as e:
+        handle_workflow_error(e, "flask_download_uq_propagation_csv", 500)
 
 
 @dakota_bp.route("/sumo_along_axes", methods=["POST"])

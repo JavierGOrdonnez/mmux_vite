@@ -134,6 +134,46 @@ export async function uploadJobCollectionCsv(params: UploadJobCollectionCsvParam
   return normalizePayloadToCamelCase<UploadJobCollectionCsvResponse>(await response.json());
 }
 
+export type ManualUqPropagationRequestBody = {
+  inputVars: string[];
+  output: string | undefined;
+  distributions: Record<string, unknown>;
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- matches the backend's expected wire-format field name
+  FunctionJobs: unknown[];
+  numSamples: number;
+  log: boolean;
+  nHistograms: number;
+  seed: number;
+};
+
+export interface UqPropagationCsvDownload {
+  blob: Blob;
+  filename: string;
+}
+
+const defaultUqPropagationCsvFilename = "uq_propagation.csv";
+
+function filenameFromContentDisposition(headerValue: string | null): string | undefined {
+  return headerValue?.match(/filename="?([^";]+)"?/)?.[1];
+}
+
+export async function downloadUqPropagationCsv(params: ManualUqPropagationRequestBody): Promise<UqPropagationCsvDownload> {
+  const response = await fetch(`/flask/dakota/download_uq_propagation_csv`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(errorData.error || "Failed to download UQ propagation CSV");
+  }
+
+  const blob = await response.blob();
+  const filename = filenameFromContentDisposition(response.headers.get("Content-Disposition")) || defaultUqPropagationCsvFilename;
+  return { blob, filename };
+}
+
 export function getSimplifiedHost(): string {
   const serviceAddress = window.location.href;
   const url = new URL(serviceAddress);
