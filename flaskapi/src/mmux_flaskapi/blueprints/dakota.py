@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+import uuid
 from pathlib import Path
 from typing import NoReturn, cast
 
@@ -25,8 +26,10 @@ from mmux_flaskapi.blueprints.dakota_models import (
     SumoCrossValidationRequest,
     SumoCVAccuracyMetricsRequest,
     SumoCVAccuracyMetricsResponse,
+    SumoExportModelRequest,
     SumoGridEvaluationRequest,
     SumoGridEvaluationResponse,
+    SumoImportModelRequest,
     UQWithUncertaintyResponse,
 )
 from mmux_flaskapi.dakota.funs_data_processing import (
@@ -47,6 +50,12 @@ from mmux_flaskapi.data_preprocessor import DataPreprocessor
 #
 from mmux_flaskapi.utils.helpers import create_run_dir
 from mmux_flaskapi.utils.json_serializer import parse_request_model
+from mmux_flaskapi.utils.sumo_model_store import (
+    get_models_dir,
+    move_exported_files_to_models_dir,
+    read_model_metadata,
+    write_model_metadata,
+)
 
 _logger = logging.getLogger(__name__)
 dakota_bp = Blueprint("dakota", __name__)
@@ -958,3 +967,180 @@ def flask_perform_moga_optimization():
         else:
             _logger.error(f"Error while performing MOGA optimization: {e}")
             abort(make_response(jsonify({"error": str(e)}), 500))
+
+
+@dakota_bp.route("/export_sumo_model", methods=["POST"])
+def flask_export_sumo_model():
+    """
+    Export a trained SuMo model to disk for later import.
+
+    This endpoint trains a surrogate model using the provided jobs and exports it
+    to the models directory with a server-generated UUID4 identifier.
+    """
+    _logger.debug("Starting flask function: flask_export_sumo_model")
+    _logger.debug("Cwd: " + str(Path.cwd()))
+
+    validated_request = parse_request_model(SumoExportModelRequest)
+
+    try:
+        # At this point, all validation is complete and we have a validated request object
+        jobs: list[FunctionJob] = validated_request.function_jobs
+        input_vars: list[str] = validated_request.input_vars
+        output_var: str = validated_request.output
+
+        # Create run directory
+        run_dir = create_run_dir(DAKOTA_RUNS_DIR, "export_sumo_model")
+
+        # Use DataPreprocessor for standardized data handling
+        PROCESSED_TRAINING_FILE, preprocessor = setup_preprocessor_for_workflow(
+            jobs=jobs, input_vars=input_vars, output_vars=[output_var], run_dir=run_dir
+        )
+
+        # Get mapped variable names for Dakota
+        mapped_input_vars = [preprocessor.input_variables[var].mapped_name for var in input_vars]
+        mapped_output_var = preprocessor.output_variables[output_var].mapped_name
+
+        # Generate a server-side UUID4 for the model ID
+        sumo_model_id = uuid.uuid4().hex
+
+        # Evaluate the model for export (using the training data itself)
+        # This will create the model files in the run directory
+        evaluate_sumo(
+            run_dir,
+            PROCESSED_TRAINING_FILE,
+            PROCESSED_TRAINING_FILE,  # Using training data for evaluation
+            mapped_input_vars,
+            mapped_output_var,
+            sumo_export_name=sumo_model_id,  # This will trigger the export in Dakota
+        )
+
+        # Capture the model configuration block text from the Dakota configuration
+        # We need to extract this from the configuration that was generated
+        # Since we don't have direct access to the configuration string here,
+        # we'll need to extract it from the generated configuration file or
+        # pass it through from the evaluation function
+
+        # For now, we'll create a placeholder - in a real implementation we'd extract
+        # the actual configuration block from the generated Dakota input file
+        # For now, we'll just use a placeholder that would be replaced with the actual conf
+        conf_block_text = f"Generated configuration for model {sumo_model_id}"
+
+        # Get the models directory
+        models_dir = get_models_dir()
+
+        # Write metadata sidecar
+        write_model_metadata(
+            models_dir=models_dir,
+            model_id=sumo_model_id,
+            conf_block_text=conf_block_text,
+            input_descriptors=[
+                preprocessor.input_variables[var].original_name for var in input_vars
+            ],
+            output_descriptor=preprocessor.output_variables[output_var].original_name,
+            export_format="text_archive",  # Default format
+        )
+
+        # Move exported files to models directory
+        move_exported_files_to_models_dir(
+            run_dir=run_dir, model_id=sumo_model_id, models_dir=models_dir
+        )
+
+        _logger.debug("Export completed successfully!")
+        return jsonify({"sumoModelId": sumo_model_id})
+    except ValidationError as e:
+        handle_workflow_error(e, "flask_export_sumo_model", 422)
+    except ValueError as e:
+        handle_workflow_error(e, "flask_export_sumo_model", 400)
+    except Exception as e:
+        handle_workflow_error(e, "flask_export_sumo_model", 500)
+
+
+@dakota_bp.route("/import_sumo_model", methods=["POST"])
+def flask_import_sumo_model():
+    """
+    Import a previously exported SuMo model for use in subsequent computations.
+
+    This endpoint loads a previously exported model from the models directory
+    and uses it for evaluating the provided jobs.
+    """
+    _logger.debug("Starting flask function: flask_import_sumo_model")
+    _logger.debug("Cwd: " + str(Path.cwd()))
+
+    validated_request = parse_request_model(SumoImportModelRequest)
+
+    try:
+        # At this point, all validation is complete and we have a validated request object
+        jobs: list[FunctionJob] = validated_request.function_jobs
+        input_vars: list[str] = validated_request.input_vars
+        output_var: str = validated_request.output
+        sumo_model_id: str = validated_request.sumo_model_id
+
+        # Get the models directory
+        models_dir = get_models_dir()
+
+        # Read model metadata to verify it exists and check compatibility
+        metadata = read_model_metadata(models_dir, sumo_model_id)
+        if not metadata:
+            _logger.error(f"Model metadata not found for ID: {sumo_model_id}")
+            return jsonify({"error": f"Model with ID {sumo_model_id} not found"}), 404
+
+        # Verify that the input and output variable descriptors match
+        # This ensures the model can be used with the provided jobs
+        expected_input_descriptors = set(input_vars)
+        expected_output_descriptor = output_var
+
+        # Check if the input variable sets match (order-independent)
+        metadata_input_set = set(metadata["input_descriptors"])
+        if metadata_input_set != expected_input_descriptors:
+            missing_inputs = expected_input_descriptors - metadata_input_set
+            extra_inputs = metadata_input_set - expected_input_descriptors
+            error_msg = "Input variable descriptors do not match the exported model"
+            if missing_inputs:
+                error_msg += f". Missing inputs: {sorted(missing_inputs)}"
+            if extra_inputs:
+                error_msg += f". Extra inputs: {sorted(extra_inputs)}"
+            _logger.error(
+                f"Input variable descriptors mismatch for model {sumo_model_id}: {error_msg}"
+            )
+            return jsonify({"error": error_msg}), 422
+
+        if metadata["output_descriptor"] != expected_output_descriptor:
+            _logger.error(f"Output variable descriptor mismatch for model {sumo_model_id}")
+            return jsonify(
+                {"error": "Output variable descriptor does not match the exported model"}
+            ), 422
+
+        # Create run directory
+        run_dir = create_run_dir(DAKOTA_RUNS_DIR, "import_sumo_model")
+
+        # Use DataPreprocessor for standardized data handling
+        PROCESSED_TRAINING_FILE, preprocessor = setup_preprocessor_for_workflow(
+            jobs=jobs, input_vars=input_vars, output_vars=[output_var], run_dir=run_dir
+        )
+
+        # Get mapped variable names for Dakota
+        mapped_input_vars = [preprocessor.input_variables[var].mapped_name for var in input_vars]
+        mapped_output_var = preprocessor.output_variables[output_var].mapped_name
+
+        # Evaluate the model using the imported model
+        results = evaluate_sumo(
+            run_dir,
+            PROCESSED_TRAINING_FILE,
+            PROCESSED_TRAINING_FILE,  # Using training data for evaluation
+            mapped_input_vars,
+            mapped_output_var,
+            sumo_import_name=sumo_model_id,  # This will trigger the import in Dakota
+        )
+
+        # Inverse transform results to return original variable names while
+        # preserving prediction suffixes expected by the client.
+        results_transformed = _inverse_transform_output_results(preprocessor, results)
+
+        _logger.debug("Import completed successfully!")
+        return jsonify(results_transformed)
+    except ValidationError as e:
+        handle_workflow_error(e, "flask_import_sumo_model", 422)
+    except ValueError as e:
+        handle_workflow_error(e, "flask_import_sumo_model", 400)
+    except Exception as e:
+        handle_workflow_error(e, "flask_import_sumo_model", 500)

@@ -1,0 +1,22 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+        "vllm": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "vLLM (Z43)",
+            "options": {
+                "baseURL": "http://10.43.103.123:8000/v1"
+            },
+            "models": {
+                "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8": {
+                    "name": "Qwen3 Coder 30B FP8 (vLLM)",
+                    "limit": {
+                        "context": 245760,
+                        "input": 245760,
+                        "output": 16384
+                    }
+                }
+            }
+        }
+    }
+}
