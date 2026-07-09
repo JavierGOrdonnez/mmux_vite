@@ -872,7 +872,24 @@ class UQWithUncertaintyResponse(BaseModel):
         ),
     )
 
-    @field_validator("bin_means", "bin_stds")
+    # V33: parameter-only distribution shape, binned on the SAME bin_edges as bin_means, so the
+    # two can be overlaid directly. This is the histogram of Y with the surrogate's own noise
+    # term (r*std_hat) zeroed out -- i.e. a hypothetical perfect surrogate. The gap between this
+    # curve and bin_means, bin-by-bin, IS the surrogate's own contribution to the spread.
+    bin_means_parameter_only: list[float] = Field(
+        ...,
+        description=(
+            "Mean (across n_histograms realizations) of the parameter-only density, binned on "
+            "the same bin_edges as bin_means but with the surrogate's predictive noise term "
+            "zeroed out. Overlay against bin_means to see the surrogate's own contribution to "
+            "the spread, bin-by-bin (V33)."
+        ),
+    )
+    mean_parameter_only: float = Field(
+        ..., description="Mean of the parameter-only (zero surrogate noise) samples (V33)."
+    )
+
+    @field_validator("bin_means", "bin_stds", "bin_means_parameter_only")
     @classmethod
     def validate_bin_arrays_same_length(cls, v: list[float]) -> list[float]:
         """Ensure bin arrays are not empty and contain valid numbers."""
@@ -896,6 +913,8 @@ class UQWithUncertaintyResponse(BaseModel):
         # Check bin arrays have same length
         if len(self.bin_means) != len(self.bin_stds):
             raise ValueError("bin_means and bin_stds must have the same length")
+        if len(self.bin_means) != len(self.bin_means_parameter_only):
+            raise ValueError("bin_means and bin_means_parameter_only must have the same length")
 
         # Check quartile ordering
         if not (self.q1 <= self.median <= self.q3):

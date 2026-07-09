@@ -1469,6 +1469,47 @@ class TestManualUQWithUncertainty:
         model (`evaluate_sumo`), not present in the raw training data. The endpoint must
         succeed with such realistic jobs, not reject them for "missing" a key that is
         never supposed to be there in the first place."""
+    def test_uq_uncertainty_insufficient_jobs_for_dimensionality_returns_clean_400(
+        self, test_client: Flask
+    ):
+        """B17/V39 regression: reproduces a real production crash -- 11 input variables with
+        only 11 completed jobs (i.e. jobs <= input_vars) made Dakota's surfpack GP surrogate
+        build abort deep in the subprocess with the opaque, non-actionable "Dakota aborted:
+        Unknown error 250" (internal MODEL_ERROR) surfaced as a bare 500. The dimension-scaled
+        minimum (`required_completed_jobs`) must reject this case with a clear 400 *before*
+        Dakota ever runs, while enough jobs (input_vars + 1) must still succeed."""
+        input_vars = [f"x{i}" for i in range(11)]
+        output = "y"
+        distributions = self.create_distribution_dict(input_vars)
+
+        # exactly at the input dimensionality (11 jobs, 11 vars) -- must fail cleanly
+        too_few_payload = {
+            "inputVars": input_vars,
+            "output": output,
+            "distributions": distributions,
+            "numSamples": 50,
+            "nHistograms": 5,
+            "seed": 42,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(11, input_vars, output),
+        }
+        response = test_client.post(
+            "/flask/dakota/manual_uq_propagation_with_uncertainty", json=too_few_payload
+        )
+        assert response.status_code == 400
+        error_message = str(response.get_json())
+        assert "Dakota aborted" not in error_message
+        assert "12" in error_message  # required = max(5, len(input_vars)+1) = 12
+
+        # one more than the input dimensionality (12 jobs, 11 vars) -- must succeed
+        enough_payload = {
+            **too_few_payload,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(12, input_vars, output),
+        }
+        response = test_client.post(
+            "/flask/dakota/manual_uq_propagation_with_uncertainty", json=enough_payload
+        )
+        assert response.status_code == 200
+
     def test_uq_uncertainty_floor_does_not_collapse_with_more_samples(self, test_client: Flask):
         """V29/V30/B13 regression: the surrogate/epistemic floor (surrogateUncertaintyStd) must
         NOT vanish as numSamples grows -- only the MC/bootstrap estimation noise (binStds, V28)
