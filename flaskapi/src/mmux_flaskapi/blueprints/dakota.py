@@ -456,9 +456,45 @@ def flask_manual_uq_propagation_with_uncertainty():
         # only to empirically decompose total variance (V29/V30, see below).
         all_results_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
         input_only_transformed = np.empty(shape=(n_histograms, num_samples), dtype=float)
+        # V38: `bootstrap_idx` and `r` are two independent randomness sources doing two different
+        # jobs -- deleting either breaks a different part of the response:
+        #   - `bootstrap_idx` (WHICH points): answers "how would the whole histogram look under a
+        #     different num_samples-sized draw from the input distribution". This is what makes
+        #     `bin_stds` a real, non-degenerate finite-sample estimate instead of trivially
+        #     shrinking to 0 as num_samples grows (the B13 bug V28 fixed).
+        #   - `r * std_hat` (noise ON each point): the ONLY place std_hat enters this computation.
+        #     `input_only_transformed` reuses the SAME bootstrap_idx but omits this term, so
+        #     `surrogate_uncertainty_std = sqrt(var(with r) - var(without r))` would always be 0 if
+        #     this term were removed -- it's what makes the epistemic/aleatoric split exist at all.
+        #
+        # What `r` actually represents (and why it's redrawn per-position, not per-point):
+        # The GP/SUMO surrogate itself is deterministic -- querying it twice at the same x gives
+        # the exact same yhat(x)/std_hat(x), evaluate_sumo() doesn't roll any dice. What IS random
+        # is our belief about the true (unobserved) simulator output: the GP posterior at x is the
+        # Bayesian statement "given training data, I believe the true y is N(yhat(x), std_hat(x)^2)".
+        # `r * std_hat` is US Monte-Carlo sampling FROM that posterior belief -- asking "if the true
+        # value here were any one of the values the GP considers plausible, what would that do to
+        # the downstream histogram?" -- not the surrogate "re-evaluating with randomness".
+        #
+        # Why independent `r` per (position, realization) even when `bootstrap_idx` repeats the
+        # same original point within one realization: `std_hat` from Dakota is ONLY the marginal
+        # (diagonal) predictive variance per point -- conf generation requests
+        # `export_approx_variance_file` (funs_create_dakota_conf.py), never a covariance/
+        # correlation file, and funs_evaluate.py just sqrt()s that one column. There is no
+        # cross-point covariance available anywhere in this codebase. A genuinely coherent "one
+        # hypothetical true function" sample (where two nearby/duplicate points would need to move
+        # together, per the GP's posterior correlation) would require the full GP kernel/covariance
+        # matrix, which Dakota isn't asked to export here. Given only marginals, independent `r` per
+        # draw is both the only self-consistent choice AND literally what a correct Monte Carlo
+        # estimator of `E_X[Var(Y|X)]` (law of total variance) requires: independent draws, good
+        # convergence -- duplicate `X_i` under bootstrap don't need matching `r_i` for that estimator
+        # to be correct.
         for i in range(n_histograms):
             bootstrap_idx = rng.integers(0, len(yhat), size=num_samples)
-            # Generate standard-normal samples from a uniform distribution via erfinv.
+            # Generate standard-normal samples via the inverse-CDF/erfinv trick: for U~Uniform(-1,1),
+            # sqrt(2)*erfinv(U) ~ N(0,1) (since Phi(x) = (1+erf(x/sqrt(2)))/2). The sqrt(2) factor is
+            # required -- erfinv(U) alone has std 1/sqrt(2) =~ 0.707, not 1, which would understate
+            # `r * std_hat` (and thus surrogate_uncertainty_std) by ~29%.
             r = np.sqrt(2) * erfinv(
                 rng.uniform(-1 + 1e-10, 1 - 1e-10, size=num_samples)
             )  # Avoid exact -1,1 for erfinv
@@ -520,6 +556,19 @@ def flask_manual_uq_propagation_with_uncertainty():
         bin_means = np.mean(histograms, axis=0)
         bin_stds = np.std(histograms, axis=0)
 
+        # V33: same histogram, but for the parameter-only (zero surrogate noise) samples, on the
+        # SAME bin_edges -- so it can be overlaid directly against bin_means. The bin-by-bin gap
+        # between the two IS the surrogate model's own contribution to the spread.
+        input_only_values_reshaped = input_only_values.reshape(n_histograms, num_samples)
+        histograms_parameter_only = np.array(
+            [
+                np.histogram(input_only_values_reshaped[i, :], bins=bin_edges, density=True)[0]
+                for i in range(n_histograms)
+            ]
+        )
+        bin_means_parameter_only = np.mean(histograms_parameter_only, axis=0)
+        mean_parameter_only = float(np.mean(input_only_values))
+
         # Calculate box plot quantities
         q1 = np.percentile(all_values_flat, 25)
         median = np.percentile(all_values_flat, 50)
@@ -553,6 +602,8 @@ def flask_manual_uq_propagation_with_uncertainty():
             "max": float(np.max(all_values_flat)),
             "surrogate_uncertainty_std": surrogate_uncertainty_std,
             "input_sampling_std": input_sampling_std,
+            "bin_means_parameter_only": bin_means_parameter_only.tolist(),
+            "mean_parameter_only": mean_parameter_only,
         }
 
         # Validate response using Pydantic

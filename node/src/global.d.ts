@@ -43,6 +43,11 @@ type DataUQHistogramType = {
   // Theorem-of-total-variance decomposition (Var(f(X)) = surrogateUncertaintyStd^2 + inputSamplingStd^2):
   surrogateUncertaintyStd: number; // epistemic: surrogate/GP model uncertainty (lack of training data)
   inputSamplingStd: number; // aleatoric: uncertainty from the input parameter distributions
+  // Parameter-only (zero surrogate noise) distribution, binned on the SAME bins as binMeans, so
+  // it can be overlaid directly on the histogram -- the bin-by-bin gap IS the surrogate's own
+  // contribution to the spread.
+  binMeansParameterOnly: number[];
+  meanParameterOnly: number;
 };
 
 type PlotConfig = {

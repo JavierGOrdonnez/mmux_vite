@@ -52,41 +52,60 @@ export default function UncertainUQ(props: LoadingPropsType) {
           throw new Error(`Error in UQ response: ${response.status}, ${response.statusText}`);
         }
         const data: DataUQHistogramType = await response.json();
+        const binCenters = Array.from(
+          { length: data.binMeans.length },
+          (_, i) => data.binsStart + ((data.binsEnd - data.binsStart) / data.binMeans.length) * (i + 0.5),
+        );
         const newPlotData: Plotly.Data[] = [
           {
-            x: Array.from(
-              { length: data.binMeans.length },
-              (_, i) => data.binsStart + ((data.binsEnd - data.binsStart) / data.binMeans.length) * (i + 0.5),
-            ),
+            x: binCenters,
             y: data.binMeans,
             type: "bar",
             marker: { color: `${theme.palette.primary.main}` },
-            name: "UQ Histogram",
+            name: "UQ Histogram (total, incl. surrogate model)",
             error_y: {
               type: "data",
               array: data.binStds,
               visible: true,
             },
           },
-          // Legend-only proxy traces: Plotly shapes (used below for the uncertainty bands) don't
-          // appear in the legend on their own, so these invisible markers give the bands a label.
+          // Mini forest-plot row (mean ± 1σ) comparing total vs surrogate-only (epistemic) spread,
+          // sharing the histogram's x-axis via xaxis2/yaxis2 below.
           {
-            x: [null],
-            y: [null],
+            x: [data.mean],
+            y: ["Total"],
+            xaxis: "x2",
+            yaxis: "y2",
             type: "scatter",
             mode: "markers",
-            marker: { color: theme.palette.secondary.main, opacity: 0.35, size: 14 },
+            marker: { color: theme.palette.primary.main, size: 10 },
+            error_x: {
+              type: "data",
+              array: [data.std],
+              visible: true,
+              color: theme.palette.primary.main,
+              thickness: 3,
+              width: 8,
+            },
             name: "Total uncertainty (±1σ, parameter + surrogate model)",
-            hoverinfo: "skip",
           },
           {
-            x: [null],
-            y: [null],
+            x: [data.mean],
+            y: ["Surrogate model uncertainty (epistemic)"],
+            xaxis: "x2",
+            yaxis: "y2",
             type: "scatter",
             mode: "markers",
-            marker: { color: theme.palette.primary.main, opacity: 0.35, size: 14 },
-            name: "Parameter uncertainty only (±1σ)",
-            hoverinfo: "skip",
+            marker: { color: theme.palette.secondary.main, size: 10 },
+            error_x: {
+              type: "data",
+              array: [data.surrogateUncertaintyStd],
+              visible: true,
+              color: theme.palette.secondary.main,
+              thickness: 3,
+              width: 8,
+            },
+            name: "Surrogate model uncertainty (epistemic, ±1σ)",
           },
         ];
         setPlotData(newPlotData);
@@ -114,49 +133,28 @@ export default function UncertainUQ(props: LoadingPropsType) {
 
   const layout = {
     title: { text: "Uncertainty Quantification Histogram" },
-    xaxis: { title: { text: selectedQoI || "Output" } },
-    yaxis: { title: { text: "Density" } },
+    // Two stacked subplots sharing the x-axis: the histogram (bottom, ~72% height) and a mini
+    // forest-plot row (top, ~18% height) comparing total vs surrogate-only (epistemic) mean±1σ.
+    xaxis: { title: { text: selectedQoI || "Output" }, domain: [0, 1], anchor: "y" as const },
+    yaxis: { title: { text: "Density" }, domain: [0, 0.72], anchor: "x" as const },
+    xaxis2: { matches: "x" as const, anchor: "y2" as const, showticklabels: false },
+    yaxis2: {
+      domain: [0.82, 1],
+      anchor: "x2" as const,
+      type: "category" as const,
+      categoryarray: ["Surrogate model uncertainty (epistemic)", "Total"],
+      fixedrange: true,
+      showgrid: false,
+      automargin: true,
+    },
     plot_bgcolor: `${theme.palette.background.default}`,
     paper_bgcolor: `${theme.palette.background.default}`,
     font: { color: `${theme.palette.text.primary}` },
-    // Nested shaded bands around the mean: the wider (total) band is the full propagated
-    // uncertainty (parameter + surrogate model); the narrower (parameter-only) band shows how
-    // much of that total comes from the input parameter distributions alone. The gap between
-    // the two bands is the surrogate model's own (epistemic) contribution.
-    shapes: dataUQHistogram
-      ? [
-          {
-            type: "rect" as const,
-            xref: "x" as const,
-            yref: "paper" as const,
-            x0: dataUQHistogram.mean - dataUQHistogram.std,
-            x1: dataUQHistogram.mean + dataUQHistogram.std,
-            y0: 0,
-            y1: 1,
-            fillcolor: theme.palette.secondary.main,
-            opacity: 0.15,
-            line: { width: 0 },
-            layer: "below" as const,
-          },
-          {
-            type: "rect" as const,
-            xref: "x" as const,
-            yref: "paper" as const,
-            x0: dataUQHistogram.mean - dataUQHistogram.inputSamplingStd,
-            x1: dataUQHistogram.mean + dataUQHistogram.inputSamplingStd,
-            y0: 0,
-            y1: 1,
-            fillcolor: theme.palette.primary.main,
-            opacity: 0.15,
-            line: { width: 0 },
-            layer: "below" as const,
-          },
-        ]
-      : [],
+    legend: { orientation: "h" as const, y: -0.25 },
   };
   const plotStyle = {
     width: "100%",
-    height: 400,
+    height: 460,
     borderRadius: "8px",
     overflow: "hidden",
   };

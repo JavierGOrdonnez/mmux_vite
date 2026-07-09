@@ -19,9 +19,14 @@ const SelectQoIDocument = (
         {` (from the spread of your input distributions themselves) and `}
         <strong>surrogate model uncertainty</strong>
         {` (from the Gaussian Process's own predictive variance, which can be large far from your
-        training data). These are reported separately, and the two shaded bands on the histogram
-        show a parameter-uncertainty-only band nested inside the wider total-uncertainty band --
-        the gap between them is how much the surrogate model itself is adding.`}
+        training data). The mini whisker row above the histogram shows these compared directly:
+        an outer whisker for the `}
+        <strong>total uncertainty</strong>
+        {` (±1σ, parameter + surrogate model combined) and an inner whisker, centered at the same
+        mean, for the `}
+        <strong>surrogate model (epistemic) uncertainty</strong>
+        {` alone -- the gap between them is how much of the total is attributable to parameter
+        (aleatoric) spread.`}
       </Typography>
       <Typography variant="body1" fontFamily="inherit" flex={1} mb={1}>
         {`The error bars on the histogram bars are a separate, third quantity: statistical noise

@@ -1512,6 +1512,59 @@ class TestManualUQWithUncertainty:
         # binStds (pure MC/bootstrap estimation error) legitimately shrinks with more samples.
         assert float(np.mean(high["binStds"])) < float(np.mean(low["binStds"]))
 
+    def test_uq_uncertainty_epistemic_std_matches_rms_of_std_hat(
+        self, test_client: Flask, monkeypatch
+    ):
+        """V29 cross-check + regression test for the erfinv sqrt(2) noise-scaling bug: this endpoint never
+        enables output normalization (`setup_preprocessor_for_workflow` is called without normalization args,
+        dakota.py:349), so DataPreprocessor's transform/inverse_transform is the identity here -- meaning
+        surrogateUncertaintyStd (computed via the bootstrap/histogram/inverse-transform pipeline) must equal
+        the closed-form sqrt(mean(std_hat**2)) exactly, up to bootstrap MC noise. This is the QUADRATIC mean
+        (RMS) of std_hat, not the arithmetic mean -- variances add, standard deviations don't -- so a
+        deliberately heterogeneous std_hat (surrogate confident on some points, unsure on others) is used to
+        make the two formulas diverge and pin down which one the endpoint actually implements. Without the
+        sqrt(2) factor on the erfinv-generated noise (dakota.py ~L429), this would report ~1/sqrt(2) of the
+        true RMS instead."""
+        input_vars = ["x1"]
+        output = "y"
+        n_points = 300
+
+        rng = np.random.default_rng(0)
+        yhat = rng.uniform(0.0, 10.0, size=n_points)
+        std_hat = np.where(np.arange(n_points) % 2 == 0, 0.1, 1.0)
+
+        def fake_evaluate_sumo(*args, **kwargs):
+            return {"y1_hat": yhat.tolist(), "y1_std_hat": std_hat.tolist()}
+
+        monkeypatch.setattr("mmux_flaskapi.blueprints.dakota.evaluate_sumo", fake_evaluate_sumo)
+
+        payload = {
+            "inputVars": input_vars,
+            "output": output,
+            "distributions": self.create_distribution_dict(input_vars),
+            "numSamples": n_points,
+            "nHistograms": 300,
+            "seed": 42,
+            "FunctionJobs": self.create_uq_uncertainty_jobs(
+                50, input_vars, output, include_uncertainty=False
+            ),
+        }
+
+        response = test_client.post(
+            "/flask/dakota/manual_uq_propagation_with_uncertainty", json=payload
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+
+        rms_std_hat = float(np.sqrt(np.mean(std_hat**2)))
+        naive_mean_std_hat = float(np.mean(std_hat))
+        reported = data["surrogateUncertaintyStd"]
+
+        # The two candidate formulas are far enough apart (0.1/1.0 mix) that MC noise can't
+        # confuse them: RMS ~0.7106, naive mean ~0.55.
+        assert abs(reported - rms_std_hat) / rms_std_hat < 0.15
+        assert abs(reported - naive_mean_std_hat) / naive_mean_std_hat > 0.15
+
     # ------------------- Validation Error Cases -------------------
 
     def test_missing_uncertainty_output(self, test_client: Flask, monkeypatch):

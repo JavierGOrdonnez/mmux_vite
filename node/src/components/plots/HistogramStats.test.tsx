@@ -19,17 +19,17 @@ const baseProps: DataUQHistogramType = {
   max: 10,
   surrogateUncertaintyStd: 1.5,
   inputSamplingStd: 1.2,
+  binMeansParameterOnly: [0.09, 0.18],
+  meanParameterOnly: 5,
 };
 
 describe("HistogramStats", () => {
-  it("renders the total, surrogate, and parameter uncertainty metrics", () => {
+  it("renders the mean, std, min, and max metrics", () => {
     render(<HistogramStats {...baseProps} />);
 
     expect(screen.getByText(/Mean:/)).toBeDefined();
     expect(screen.getByText(/Std \(total\):/)).toBeDefined();
-    expect(screen.getByText(/Surrogate model uncertainty:/)).toBeDefined();
-    expect(screen.getByText(/Parameter uncertainty:/)).toBeDefined();
-    expect(screen.getByText(/1\.500/)).toBeDefined();
-    expect(screen.getByText(/1\.200/)).toBeDefined();
+    expect(screen.getByText(/Min:/)).toBeDefined();
+    expect(screen.getByText(/Max:/)).toBeDefined();
   });
 });
