@@ -282,6 +282,8 @@ def evaluate_sumo(
     PROCESSED_EVALUATION_SAMPLES_FILE: Path,
     input_vars: list[str],
     response_var: str,
+    sumo_import_name: str | None = None,
+    sumo_export_name: str | None = None,
 ) -> dict[str, list[float]]:
     input_vars = sanitize_varnames(input_vars)
     response_var = sanitize_varnames(response_var)
@@ -289,12 +291,21 @@ def evaluate_sumo(
     """Given a training data to create a SuMo, generate it, and evaluate on the training data.
     No callback is necessary (everything internal to Dakota).
     """
+    # Handle model import: copy files from models directory if importing
+    if sumo_import_name:
+        models_dir = run_dir.parent / "models"
+        if models_dir.exists():
+            for file in models_dir.glob(f"{sumo_import_name}*"):
+                shutil.copy(file, run_dir)
+
     # create dakota file
     dakota_conf = create_sumo_evaluation_conffile(
         build_file=PROCESSED_TRAINING_FILE,
         samples_file=PROCESSED_EVALUATION_SAMPLES_FILE,
         input_variables=input_vars,
         output_responses=[response_var],
+        sumo_import_name=sumo_import_name,
+        sumo_export_name=sumo_export_name,
     )
 
     # run dakota

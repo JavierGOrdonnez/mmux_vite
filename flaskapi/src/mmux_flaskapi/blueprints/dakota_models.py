@@ -3,6 +3,7 @@ Pydantic models for Dakota API endpoints validation.
 """
 
 import logging
+import uuid
 from typing import Literal
 
 import numpy as np
@@ -988,3 +989,52 @@ class SumoCVAccuracyMetricsResponse(BaseModel):
             elif not isinstance(metrics, CVAccuracyMetrics):
                 raise ValueError(f"Metrics for {var_name} must be CVAccuracyMetrics or string")
         return self
+
+
+class SumoExportModelRequest(BaseModel):
+    """Request model for exporting a SuMo model."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    output: str = Field(..., min_length=1, description="Name of the output variable to validate")
+    input_vars: list[str] = Field(
+        ...,
+        min_length=1,
+        description="List of input variable names",
+    )
+    function_jobs: list[FunctionJob] = Field(
+        ...,
+        min_length=5,
+        description="List of function jobs (minimum 5 required)",
+    )
+
+
+class SumoImportModelRequest(BaseModel):
+    """Request model for importing a SuMo model."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    output: str = Field(..., min_length=1, description="Name of the output variable to validate")
+    input_vars: list[str] = Field(
+        ...,
+        min_length=1,
+        description="List of input variable names",
+    )
+    function_jobs: list[FunctionJob] = Field(
+        ...,
+        min_length=5,
+        description="List of function jobs (minimum 5 required)",
+    )
+    sumo_model_id: str = Field(
+        ..., min_length=32, max_length=32, description="ID of the model to import"
+    )
+
+    @field_validator("sumo_model_id")
+    @classmethod
+    def validate_sumo_model_id(cls, v: str) -> str:
+        """Validate that sumo_model_id is a valid UUID4 hex string."""
+        try:
+            uuid.UUID(v, version=4)
+        except ValueError:
+            raise ValueError("sumo_model_id must be a valid UUID4 hex string")
+        return v
