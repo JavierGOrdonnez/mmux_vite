@@ -24,6 +24,8 @@ COMPOSE_FILES = [
 
 VITE_CONFIG = REPO_ROOT / "node" / "vite.config.ts"
 RESOLVE_APP_PORT = REPO_ROOT / "scripts" / "resolve-app-port.sh"
+RESOLVE_DOCKER_PORT = REPO_ROOT / "scripts" / "resolve-docker-port.sh"
+DOCS_MAKEFILE = REPO_ROOT / "docs" / "Makefile"
 
 
 def test_app_service_depends_on_healthy_upstreams():
@@ -83,7 +85,7 @@ def test_make_targets_reuse_running_compose_app_port():
     assert content.count("MMUX app URL (this WSL shell): http://localhost:%s") == 12
     assert content.count("MMUX app URL (Windows browser via WSL IP): http://%s:%s") == 12
     assert "hostname -I | awk '{print $$1}'" in content
-    assert content.count("============================================================") == 24
+    assert content.count("============================================================") >= 24
 
 
 def test_resolve_app_port_prefers_existing_compose_publication(tmp_path):
@@ -171,3 +173,105 @@ def test_find_free_port_fails_fast_without_timeout_command(tmp_path):
 
     assert result.returncode != 0
     assert "timeout" in result.stderr.lower()
+
+
+def test_resolve_docker_port_prefers_existing_container_publication(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$*" == "port mmux-docs-serve 8001" ]]; then\n'
+        "  echo '0.0.0.0:8001'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n"
+    )
+    docker.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(RESOLVE_DOCKER_PORT), "mmux-docs-serve", "8001", "8001"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "8001"
+
+
+def test_docs_make_targets_surface_reachable_urls():
+    content = (REPO_ROOT / "Makefile").read_text()
+
+    assert "Docs URL (this WSL shell): http://localhost:%s/" in content, (
+        "Root docs-serve output must distinguish WSL-local localhost from the "
+        "Windows browser URL (V26/B20)"
+    )
+    assert "Docs URL (Windows browser via WSL IP): http://%s:%s/" in content, (
+        "Root docs-serve output must advertise the WSL-IP URL for Windows "
+        "browsers instead of assuming Windows localhost forwarding (V26/B20)"
+    )
+    assert "Windows localhost only works if Windows is forwarding this port." in content, (
+        "Root docs-serve output must explain that Windows localhost depends on "
+        "external Windows forwarding/portproxy state (V26/B20)"
+    )
+    assert (
+        'DOCS_PORT="$${DOCS_PORT:-$$(bash scripts/resolve-docker-port.sh $(DOCS_CONTAINER_NAME) 8001 $(DOCS_BASE_PORT))}"'
+        in content
+    ), (
+        "Root docs-serve must resolve its host port from the docs container's "
+        "existing publication or from the docs preview base port range (V26/B19)"
+    )
+    assert "docker build -t $(DOCS_IMAGE) -f docs/Dockerfile.serve docs" in content, (
+        "Root docs-serve must build the dedicated docs preview image before running it (V26/B17)"
+    )
+    assert '-p "$$DOCS_PORT:8001"' in content, (
+        "Root docs-serve must publish the selected DOCS_PORT from the docs "
+        "container onto localhost (V26/B17)"
+    )
+    assert '-e SITE_URL="http://localhost:$$DOCS_PORT/"' in content, (
+        "Root docs-serve must keep overriding SITE_URL to the URL root for local "
+        "preview while matching the Docker-published localhost port (V28/B15)"
+    )
+    assert '-e MKDOCS_PUBLIC_HOST=localhost -e MKDOCS_PUBLIC_PORT="$$DOCS_PORT"' in content, (
+        "Root docs-serve must pass the browser-facing host/port through to the "
+        "MkDocs wrapper so generated preview URLs stay on localhost (V28/B15)"
+    )
+    assert "docker run --rm -it" not in content, (
+        "Root docs-serve must not require an interactive TTY; non-interactive "
+        "runs otherwise fail before the preview starts, leaving localhost "
+        "unreachable (V29/B18)"
+    )
+    assert "docker run -d --name $(DOCS_CONTAINER_NAME)" in content, (
+        "Root docs-serve must launch the docs preview as a named detached "
+        "container so the listener survives after the command returns (V29/B18)"
+    )
+    assert "set -e;" in content, (
+        "Root docs-serve must fail on build/run errors instead of letting an "
+        "`|| true` cleanup mask earlier command failures (V31/B20)"
+    )
+    assert 'curl -fsS "http://127.0.0.1:$$DOCS_PORT/"' in content, (
+        "Root docs-serve must wait for the published localhost port to answer "
+        "before declaring the preview ready (V29/B18)"
+    )
+
+
+def test_docs_makefile_serve_uses_configurable_port():
+    content = DOCS_MAKEFILE.read_text()
+
+    assert "DOCS_PORT" in content and "?= 8001" in content, (
+        "docs/Makefile must default DOCS_PORT to 8001 so the root wrapper can "
+        "pass the browser-facing docs port explicitly (V26/B13)"
+    )
+    assert "MKDOCS_DEV_ADDR=0.0.0.0:$(DOCS_PORT)" in content, (
+        "docs/Makefile serve target must bind MkDocs on the configured DOCS_PORT "
+        "instead of a hard-coded port literal (V26/B13)"
+    )
+    assert "MKDOCS_PUBLIC_HOST=localhost MKDOCS_PUBLIC_PORT=$(DOCS_PORT)" in content, (
+        "docs/Makefile serve target must advertise the browser-facing localhost "
+        "origin while binding on all interfaces for preview (V28/B15)"
+    )

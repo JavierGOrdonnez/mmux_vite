@@ -31,6 +31,7 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=2000]
+        exclude: ^docs/docs/assets/MetaModeling_figures/1DCurves_Isop50_Shannon50_angleWidth_Length\.png$
 
   # TypeScript/React: prettier via eslint (flat config requires cwd=node/)
   - repo: local

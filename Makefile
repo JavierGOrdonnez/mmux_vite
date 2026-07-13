@@ -6,6 +6,47 @@ DOCKER_IMAGE_TAG := 1.5.18
 
 FLASKAPI_DIR := ./flaskapi
 NODE_DIR := ./node
+DOCS_BASE_PORT ?= 8001
+DOCS_IMAGE := mmux-docs-serve
+DOCS_CONTAINER_NAME := mmux-docs-serve
+
+
+## Documentation
+.PHONY: docs-devenv
+docs-devenv:
+	$(MAKE) -C docs devenv
+
+.PHONY: docs-serve
+docs-serve:
+	@set -e; \
+	DOCS_PORT="$${DOCS_PORT:-$$(bash scripts/resolve-docker-port.sh $(DOCS_CONTAINER_NAME) 8001 $(DOCS_BASE_PORT))}"; \
+	WSL_IP="$$(hostname -I | awk '{print $$1}')"; \
+	printf '\n============================================================\nDocs URL (this WSL shell): http://localhost:%s/\nDocs URL (Windows browser via WSL IP): http://%s:%s/\nWindows localhost only works if Windows is forwarding this port.\n============================================================\n\n' "$$DOCS_PORT" "$$WSL_IP" "$$DOCS_PORT"; \
+	docker build -t $(DOCS_IMAGE) -f docs/Dockerfile.serve docs; \
+	docker rm -f $(DOCS_CONTAINER_NAME) >/dev/null 2>&1 || true; \
+	docker run -d --name $(DOCS_CONTAINER_NAME) -p "$$DOCS_PORT:8001" -e SITE_URL="http://localhost:$$DOCS_PORT/" -e MKDOCS_DEV_ADDR="0.0.0.0:8001" -e MKDOCS_PUBLIC_HOST=localhost -e MKDOCS_PUBLIC_PORT="$$DOCS_PORT" -e WATCHDOG_FORCE_POLLING=true -v "$(PWD)/docs:/docs" -w /docs $(DOCS_IMAGE) >/dev/null; \
+	for attempt in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -fsS "http://127.0.0.1:$$DOCS_PORT/" >/dev/null; then \
+			printf 'Docs preview ready in container `%s`. Stop with `make docs-stop`.\n' "$(DOCS_CONTAINER_NAME)"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	printf 'Docs preview failed to become ready on http://localhost:%s/ . Recent container logs:\n' "$$DOCS_PORT" >&2; \
+	docker logs --tail 50 $(DOCS_CONTAINER_NAME) >&2; \
+	exit 1
+
+.PHONY: docs-stop
+docs-stop:
+	@docker rm -f $(DOCS_CONTAINER_NAME) >/dev/null 2>&1 || true
+
+.PHONY: docs-build
+docs-build: docs-devenv
+	$(MAKE) -C docs build
+
+.PHONY: docs-gh-deploy
+docs-gh-deploy: docs-devenv
+	$(MAKE) -C docs gh-deploy
 
 ## Front-end
 install-node:

@@ -1,0 +1,156 @@
+/* Custom styles for Sim4Life Plugin Framework documentation */
+
+/* Primary color scheme */
+:root {
+  --md-primary-fg-color: #0366d6;
+  --md-primary-fg-color--light: #58a6ff;
+  --md-primary-fg-color--dark: #0d419d;
+  --md-accent-fg-color: #f97316;
+}
+
+/* Code block styling */
+.md-typeset pre > code {
+  border-radius: 4px;
+}
+
+/* API method styling */
+.md-typeset .method {
+  margin-bottom: 1.5em;
+  padding-bottom: 1em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.md-typeset .method:last-child {
+  border-bottom: none;
+}
+
+/* Class name styling */
+.md-typeset h3 code {
+  font-size: 0.9em;
+}
+
+/* Parameter table styling */
+.md-typeset table:not([class]) {
+  font-size: 0.8rem;
+  border-radius: 4px;
+  box-shadow: 0 2px 2px 0 rgba(0,0,0,.14), 0 1px 5px 0 rgba(0,0,0,.12), 0 3px 1px -2px rgba(0,0,0,.2);
+}
+
+.md-typeset table:not([class]) th {
+  background-color: rgba(3, 102, 214, 0.1);
+  color: #448aff;
+}
+
+/* Warning and note styling */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-left-color: #448aff;
+}
+
+.md-typeset .admonition.note > .admonition-title,
+.md-typeset details.note > .admonition-title {
+  background-color: rgba(68, 138, 255, 0.1);
+}
+
+.md-typeset .admonition.note > .admonition-title::before,
+.md-typeset details.note > summary::before {
+  background-color: #448aff;
+}
+
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-left-color: #00bfa5;
+}
+
+.md-typeset .admonition.tip > .admonition-title,
+.md-typeset details.tip > .admonition-title {
+  background-color: rgba(0, 191, 165, 0.1);
+}
+
+.md-typeset .admonition.tip > .admonition-title::before,
+.md-typeset details.tip > summary::before {
+  background-color: #00bfa5;
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-left-color: #f97316;
+}
+
+.md-typeset .admonition.warning > .admonition-title,
+.md-typeset details.warning > .admonition-title {
+  background-color: rgba(249, 115, 22, 0.1);
+}
+
+.md-typeset .admonition.warning > .admonition-title::before,
+.md-typeset details.warning > summary::before {
+  background-color: #f97316;
+}
+
+/* Image styling */
+.md-typeset img {
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Sidebar navigation styling */
+.md-nav__item .md-nav__link--active {
+  font-weight: bold;
+  color: var(--md-primary-fg-color);
+}
+
+/* Footer styling */
+.md-footer-meta {
+  background-color: var(--md-primary-fg-color--dark);
+}
+
+/* Logo styling */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 2rem;
+}
+
+/* Custom styles for API documentation */
+.api-signature {
+  background-color: #f5f5f5;
+  padding: 1em;
+  border-radius: 4px;
+  border-left: 4px solid #448aff;
+  margin-bottom: 1em;
+  font-family: "Roboto Mono", monospace;
+}
+
+.class-doc {
+  padding: 1em;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  margin-bottom: 1.5em;
+}
+
+.class-doc h4 {
+  margin-top: 0;
+  border-bottom: 1px solid #e1e4e8;
+  padding-bottom: 0.5em;
+}
+
+.method-signature {
+  font-family: monospace;
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 0.5em;
+  border-radius: 4px;
+  margin-bottom: 0.5em;
+}
+
+/* Custom styling for diagrams */
+.mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 2em 0;
+}
+
+/* Mobile responsive adjustments */
+@media screen and (max-width: 76.1875em) {
+  .md-nav--primary .md-nav__title {
+    background-color: var(--md-primary-fg-color);
+  }
+}

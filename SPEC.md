@@ -88,6 +88,12 @@ V25: `get_osparc_api_if_configured()` ! tolerate `app.osparc_api` implementation
 V26: backend tests touching `local_job_store`/text-file persistence ! use per-run temp dirs (or isolated validation mount) via `LOCAL_STORE_DIR`/`TEXT_FILES_DIR`, reset before app creation; ⊥ read/write repository `runs_local` or shared persistent state (B15)
 V27: CI `prek` job generates `node/src/osparc-api-ts-client/` before `uvx prek run --all-files`; generated client is untracked and required by `tsconfig.app.json` path alias `osparc-api-ts-client`, so lint ! run against a clean checkout without the generated module (B16)
 V28: CI node-tests job ! run `npm test`; deprecated `npm run test:browser` alias may remain manual but ⊥ duplicate the jsdom suite in CI; real browser coverage remains `npm run test:e2e` (B17)
+V29: local docs preview (`make docs-serve`) ! distinguish WSL-local `localhost:$DOCS_PORT` from Windows-browser `http://<WSL_IP>:$DOCS_PORT/`; Windows `localhost:$DOCS_PORT` ⊥ assumed unless Windows forwarding/portproxy includes resolved docs port (B17,B20)
+V30: root `docs-build`/`docs-gh-deploy` Makefile targets ! depend on `docs-devenv`; root `docs-serve` ! stay self-contained via Docker (B14,B17)
+V31: local `make docs-serve` ! serve at URL root; `docs/mkdocs.yml` `site_url` ! stay `!ENV`-overridable so production GH Pages keeps its `/mmux_vite/` prefix (B15)
+V32: root `make docs-serve` ⊥ require an interactive TTY; it ! start a named detached preview container, wait until the local URL answers, then return success (B18)
+V33: root `make docs-serve` ! resolve docs host port from a docs-specific band starting at `8001`, reusing existing publication or selecting the first free port (B19)
+V34: root `make docs-serve` command chain ! fail on Docker build/run errors; cleanup ! mask earlier failures (B20)
 
 ## §T
 id|status|task|cites
@@ -116,6 +122,17 @@ T26|.|backend test isolation: autouse pytest fixture allocates per-run `tmp_path
 T27|.|Node deprecation cleanup: upgrade ESLint/toolchain off deprecated ESLint 8 dependency chain (`inflight`, `@humanwhocodes/*`, `rimraf@3`, old nested `glob`); clean `npm ci` emits no listed deprecation warnings|—
 T28|.|incrementally fix the 30 `react-hooks/set-state-in-effect` warnings surfaced by eslint-plugin-react-hooks v7 (rule downgraded error→warn in T27 to unblock the ESLint v9 upgrade w/o a risky bulk behavioral refactor); mostly persistence/context-hydration + job-status polling patterns, needs case-by-case triage (derive-during-render vs justified external-sync exception)|node/eslint.config.js
 T29|x|Correlation and Sobol sensitivity-analysis backend endpoints, SciPy computation, response-key preservation, and numerical regression tests|flaskapi/SPEC.md T25
+T30|x|DOCS-MIGRATION 1/4: migrate the Model Intelligence docs site into `docs/`, preserve history, update `site_url`/`repo_url`, and add the root LINKS entry|—
+T31|x|DOCS-MIGRATION 2/4: add `.github/workflows/docs.yml` to build and deploy docs on pushes to `main` touching `docs/**`|T30
+T32|x|DOCS-MIGRATION 3/4: port docs Makefile targets into root `Makefile` as `docs-serve`/`docs-build` and related targets|T30
+T33|.|DOCS-MIGRATION 4/4: archive the old Model Intelligence repository and replace its README with a redirect note|T30,T31
+T34|x|DOCS-MIGRATION pilot page: document Gaussian-process surrogate models and register it in the MkDocs nav|T30
+T35|x|fix B13/B16/B17: Dockerize root docs preview and expose a reliable localhost URL|V29,B13,B16,B17
+T36|x|fix B14: make docs build/deploy bootstrap `docs-devenv` automatically|V30,B14,B17
+T37|x|fix B15: make local docs preview use root paths while production retains the GH Pages prefix|V31,B15,B17
+T38|x|fix B18: run docs preview detached and add `make docs-stop`|V32,B18
+T39|x|fix B19: resolve docs preview ports from the docs-specific `8001` band|V33,B19
+T40|x|fix B20: print WSL/browser URLs and preserve Docker failures in `make docs-serve`|V29,V34,B20
 
 ## §B
 id|date|cause|fix
@@ -133,3 +150,9 @@ B12|2026-07-07|B6/B11's `get_osparc_api_if_configured()` unconditionally read `o
 B15|2026-08-10|Flask tests inherited shared repository local-data state (`runs_local`/text files); dirty state changed list endpoints (expected 3 functions → actual 27), producing order/state-dependent failures after dependency validation|V26
 B16|2026-08-10|CI `prek` ran before the untracked OpenAPI-generated `node/src/osparc-api-ts-client/` existed; `import/no-unresolved` rejected valid `osparc-api-ts-client` imports despite local `npm run build`/generated working tree passing|V27
 B17|2026-08-11|PR #521 review: `node/package.json` `test:browser` referenced removed `vitest.browser.config.ts`, but CI `node-tests` ran only `make test-node` → `npm ci && npm test`, so the stale script was never executed|V28
+B21|2026-07-08|`make docs-serve` exposed only a raw WSL MkDocs URL, which was not reliably reachable from the user's browser|V29
+B22|2026-07-08|docs build/serve/deploy targets assumed `.venv/bin/mkdocs` already existed on a fresh checkout|V30
+B23|2026-07-08|production `site_url` caused local docs preview to serve beneath `/mmux_vite/` instead of `/`|V31
+B24|2026-07-09|Dockerized docs preview still used `docker run --rm -it`, failing without a TTY|V32
+B25|2026-07-09|docs preview needed resilient reuse/free-port selection beginning at `8001`|V33
+B26|2026-07-09|docs preview output and cleanup masked Docker failures and did not explain WSL/browser URL differences|V29,V34

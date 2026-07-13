@@ -1,0 +1,95 @@
+site_name: S4L Modeling Intelligence Documentation
+site_description: Documentation for Sim4Life's Modeling Intelligence HyperTools
+site_author: Sim4Life Modeling Intelligence Team
+
+# The following settings ensure proper path resolution for GitHub Pages
+# Local `make docs-serve` overrides SITE_URL to serve at the URL root instead of /mmux_vite/
+site_url: !ENV [SITE_URL, 'https://ITISFoundation.github.io/mmux_vite/']
+# Uncomment and customize if your repo is in a subfolder
+# docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  language: en
+  palette:
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: indigo
+      accent: indigo
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: indigo
+      accent: indigo
+  icon:
+    repo: fontawesome/brands/github
+
+# Update these URLs with your actual GitHub repository information
+repo_url: https://github.com/ITISFoundation/mmux_vite
+repo_name: mmux_vite
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Manual:
+    - HyperTool Creation: manual/hypertool-creation.md
+    - Navigation: manual/navigation.md
+    - Setup: manual/setup.md
+    - Response Surface Modeling: manual/response-surface-modeling.md
+    - Surrogate Models & Gaussian Processes: manual/surrogate-models-gaussian-processes.md
+    - Multi-Objective Genetic Algorithm (MOGA): manual/multi-objective-genetic-algorithm.md
+    - Uncertainty Quantification: manual/uncertainty-quantification.md
+  - Tutorials:
+    - Tutorial Overview: tutorials/overview.md
+    - Pipeline Setup Tutorial: tutorials/pipeline-setup-tutorial.md
+    - Response Surface Modeling Tutorial: tutorials/response-surface-modeling-tutorial.md
+    - Multi-Objective Genetic Algorithm (MOGA) Tutorial: tutorials/moga-tutorial.md
+    - Uncertainty Quantification Tutorial: tutorials/uncertainty-quantification-tutorial.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.arithmatex:
+      generic: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/zurichmedtech
+extra_javascript:
+  - js/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - css/custom.css
+
+plugins:
+  - search
+  - mkdocstrings
