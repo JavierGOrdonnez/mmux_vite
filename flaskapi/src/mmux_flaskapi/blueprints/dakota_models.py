@@ -98,6 +98,8 @@ class JobVariableSelection(BaseModel):
 
         missing_input_vars = set()
         missing_output_vars = set()
+        missing_input_counts = {input_var: 0 for input_var in self.input_vars}
+        missing_output_counts = {output_var: 0 for output_var in self.output_vars}
         available_input_keys = set()
         available_output_keys = set()
 
@@ -108,21 +110,35 @@ class JobVariableSelection(BaseModel):
             for input_var in self.input_vars:
                 if input_var not in job.inputs:
                     missing_input_vars.add(input_var)
+                    missing_input_counts[input_var] += 1
 
             for output_var in self.output_vars:
                 if output_var not in job.outputs:
                     missing_output_vars.add(output_var)
+                    missing_output_counts[output_var] += 1
 
         if missing_input_vars:
+            missing_details = ", ".join(
+                f"{variable} missing from {missing_input_counts[variable]} of "
+                f"{len(completed_jobs)} completed jobs"
+                for variable in sorted(missing_input_vars)
+            )
             raise ValueError(
-                f"Input variables {sorted(missing_input_vars)} not found in completed job inputs. "
-                f"Available input keys: {sorted(available_input_keys)}"
+                f"Input variables are missing from completed job inputs: {missing_details}. "
+                f"All {len(completed_jobs)} completed jobs must contain every selected input variable. "
+                f"Available input keys across jobs: {sorted(available_input_keys)}"
             )
 
         if missing_output_vars:
+            missing_details = ", ".join(
+                f"{variable} missing from {missing_output_counts[variable]} of "
+                f"{len(completed_jobs)} completed jobs"
+                for variable in sorted(missing_output_vars)
+            )
             raise ValueError(
-                f"Output variables {sorted(missing_output_vars)} not found in completed job outputs. "
-                f"Available output keys: {sorted(available_output_keys)}"
+                f"Output variables are missing from completed job outputs: {missing_details}. "
+                f"All {len(completed_jobs)} completed jobs must contain every selected output variable. "
+                f"Available output keys across jobs: {sorted(available_output_keys)}"
             )
 
         return self

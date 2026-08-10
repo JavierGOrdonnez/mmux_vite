@@ -30,6 +30,33 @@ def create_function_job_list(n, status="completed", inputs=None, outputs=None):
     return [make_function_job(status, inputs, outputs) for _ in range(n)]
 
 
+def test_job_variable_selection_reports_incomplete_rows_explicitly():
+    """Incomplete completed jobs remain a hard failure with actionable details."""
+    from pydantic import ValidationError
+
+    from mmux_flaskapi.blueprints.dakota_models import JobVariableSelection
+
+    input_vars = ["internal_gap_max_mm", "internal_gap_mean_mm", "internal_gap_min_mm"]
+    jobs = create_function_job_list(56, inputs=input_vars, outputs=["y"])
+    jobs.append(make_function_job("completed", ["x1"], ["y"]))
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "internal_gap_max_mm missing from 1 of 57 completed jobs.*"
+            "All 57 completed jobs must contain every selected input variable"
+        ),
+    ):
+        JobVariableSelection.model_validate(
+            {
+                "jobs": jobs,
+                "input_vars": input_vars,
+                "output_vars": ["y"],
+                "minimum_completed_jobs": 56,
+            }
+        )
+
+
 def make_incomplete_job(status: str, inputs: list[str], outputs: list[str], missing_field: str):
     """Create a FunctionJob with a missing field for testing error cases."""
     job = make_function_job(status, inputs, outputs)
