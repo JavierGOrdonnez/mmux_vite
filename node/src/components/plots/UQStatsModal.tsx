@@ -4,6 +4,7 @@ import { useMMUXContext } from "../../context/MMUXContext";
 import { useFunctionContext } from "../../context/FunctionContext";
 import { useJobContext } from "../../context/JobContext";
 import { fetchWithRetry } from "../../utils/fetchRetry";
+import { getResponseErrorMessage } from "../../utils/httpError";
 import CalculatingWarning from "./CalculatingWarning";
 import InsufficientDataWarning from "./InsufficientDataWarning";
 import StatCard from "./StatCard";
@@ -46,18 +47,21 @@ function UQStatsModal(props: UQStatsModalProps) {
   const { numSamples, selectedQoI } = useMMUXContext();
   const { fetchedJobCollections, filteredJobList } = useJobContext();
   const [stats, setStats] = useState<DataUQHistogramType>();
+  const [errorMessage, setErrorMessage] = useState<string>();
   const [propagating, setPropagating] = useState(false);
 
   useEffect(() => {
     if (!open) return undefined;
     if (filteredJobList.length === 0) {
       setStats(undefined);
+      setErrorMessage(undefined);
       setPropagating(false);
       return undefined;
     }
 
     let cancelled = false;
     setStats(undefined);
+    setErrorMessage(undefined);
     setPropagating(true);
 
     (async () => {
@@ -77,17 +81,19 @@ function UQStatsModal(props: UQStatsModalProps) {
           }),
         });
         if (!response.ok) {
-          throw new Error(`Error in UQ Stats response: ${response.status}, ${response.statusText}`);
+          throw new Error(await getResponseErrorMessage(response));
         }
         const data: DataUQHistogramType = await response.json();
         if (!cancelled) {
           setStats(data);
+          setErrorMessage(undefined);
           setPropagating(false);
         }
       } catch (error) {
         if (!cancelled) {
           console.warn("Error fetching UQ Stats:", error);
           setStats(undefined);
+          setErrorMessage(error instanceof Error ? error.message : String(error));
           setPropagating(false);
         }
       }
@@ -106,6 +112,7 @@ function UQStatsModal(props: UQStatsModalProps) {
           fetchedJobCollections={fetchedJobCollections}
           filteredJobList={filteredJobList}
           height={200}
+          errorMessage={errorMessage}
           numInputVars={inputVars.length}
         />
       )}

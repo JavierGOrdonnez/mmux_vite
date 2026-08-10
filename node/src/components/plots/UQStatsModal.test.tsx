@@ -84,4 +84,30 @@ describe("UQStatsModal", () => {
     expect(screen.getByText(/Epistemic uncertainty: coming soon/)).toBeInTheDocument();
     expect(screen.getByText(/Aleatoric uncertainty: coming soon/)).toBeInTheDocument();
   });
+
+  it("shows the backend error when stats calculation fails", async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: () => Promise.resolve({ error: "Selected jobs have incomplete inputs" }),
+        clone: () =>
+          ({
+            json: () => Promise.resolve({ error: "Selected jobs have incomplete inputs" }),
+            text: () => Promise.resolve(""),
+          }) as Response,
+      }),
+    ) as unknown as typeof global.fetch;
+
+    render(<UQStatsModal open setOpen={vi.fn()} />);
+
+    await waitFor(
+      () => {
+        expect(screen.getByText("Selected jobs have incomplete inputs")).toBeInTheDocument();
+      },
+      { timeout: 10000 },
+    );
+    expect(screen.queryByText("Error during calculation, please contact support.")).toBeNull();
+  }, 10000);
 });
