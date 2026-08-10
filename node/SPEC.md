@@ -1,4 +1,5 @@
 V47: failed analysis requests with an API error body MUST surface that error text in the relevant plot warning; ⊥ replace an available backend diagnostic with the generic support message (B29)
+V48ae: every Dakota analysis view that handles a failed HTTP response MUST preserve and surface the backend diagnostic when present, while retaining existing retry/dedup behavior; agent-authored UI changes remain pending human developer review for UI/UX compliance (B30cg)
 # SPEC — MMUX frontend (node/)
 
 Caveman-encoded. Distilled from code 2026-05-28. Child of root spec.
@@ -20,6 +21,7 @@ Vite + React 19 + TS frontend: guided 2-step meta-modeling UX (Setup → Results
 - style: functional components + hooks only; ⊥ `any`; props typed via TS (⊥ PropTypes); destructure props in signature
 - naming: Components PascalCase | funcs/vars camelCase | util/hook files kebab|camel `.ts` | constants CONSTANT_CASE
 - errors: console.warn/error dev feedback + react-toastify user-facing
+- agent-authored UI changes in this wave remain pending human developer review for UI/UX compliance before release
 --- structural conventions (alexpargon review on #456 + fix commit `0811bcb`) ---
 - pure utility modules (⊥ JSX/React) live `utils/` ∀ consumer count (⊥ co-locate in `components/`); e.g. (see `0811bcb`) `sumoResponse.ts` belongs `utils/` not `components/plots/`
 - shared helpers single-sourced + exported (⊥ duplicate identical defs across files); e.g. one `snakeToCamelCase` exported from `utils/functionUtils.ts`
@@ -144,6 +146,7 @@ T44|x|`/sumo_cross_validation` response now nested under `cv_results` (../flaska
 T45|x|fix B27: `JobContext` gained `hasAutoSelectedJobs`/`setHasAutoSelectedJobs`, reset only when `fetchedJobCollections` is reassigned (genuine refetch); `JobSelector`'s hydration effect now clears `loading` unconditionally but gates `onToggleAll(true)`/`setIsSuMoGenerated(true)` on the flag, so Setup↔Results remounts no longer reset manual job selection. Tests: `JobContext.test.tsx` (flag resets on refetch, survives unrelated `setSelectedJobUids`)|V45,B27,B11
 T46|x|fix B28: pass `numInputVars={inputVars.length}` at `InsufficientDataWarning`'s 4 call sites (`CorrelationIndicesPlot`, `SobolIndicesPlot`, `SuMoStats`, `UQStatsModal`), all Sobol'/SuMo-CV-specific components predating `upstream/develop`'s dimension-aware-message prop; caught by `tsc -b` (TS2741 missing required prop), not a failing test — no unit test exercises these 4 render paths directly|V46,B28
 T47|x|fix B29: `UncertainUQ` reads the backend `error` field for non-OK responses, stores it, and passes it to `InsufficientDataWarning`; warning prioritizes explicit request errors over no-data/generic fallback; regression `InsufficientDataWarning.test.tsx`|V47,B29
+T48bf|x|fix B30cg: shared `getResponseErrorMessage` parses JSON `{error}`, plain text, or HTTP fallback; `fetchWithRetry` returns the final non-OK response; correlation/Sobol utilities, UQ Stats, correlation/Sobol plots, SuMo Stats/Validation, and 1D/2D/3D interpolation views surface backend diagnostics while preserving retry-key clearing; regressions + full Vitest/lint/build pass. Agent-authored UI changes require human developer review for UI/UX compliance before release|V48ae,B30cg,V18,V23
 
 ## §B
 id|date|cause|fix
@@ -171,3 +174,4 @@ B26|2026-07-16|`/sumo_cross_validation` response was a flat dict with variable n
 B27|2026-08-04|PR #502 review (Alex, human, "additional note"): `JobSelector`'s hydration effect coupled clearing view-local `loading` with destructive `onToggleAll(true)`/`setIsSuMoGenerated(true)`, gated only on `loading===true`. Pre-existing `loading` initializer (`fetchedJobCollections===undefined`) usually skipped this on Setup↔Results remounts, so Alex flagged it "likely benign". A same-PR fix for a separate Copilot-flagged loading-flash bug changed the initializer to always `true` — turning the coupling into a guaranteed reset of the user's manual job (de)selection on every remount (`ReturnCurrentView` unmounts MOGA/SuMo/UQ per nav). Caught while following up on Alex's note, not by a failing test|V45
 B28|2026-08-05|Merging `upstream/develop` into `jgo/sobol-indices` auto-merged `InsufficientDataWarning.tsx` cleanly (develop added a required `numInputVars` prop, no conflict since this branch never touched that file) but left 4 call sites unique to this branch — `CorrelationIndicesPlot`, `SobolIndicesPlot`, `SuMoStats`, `UQStatsModal` — still calling it with only `fetchedJobCollections`/`filteredJobList`/`height`, missing the new required prop. `eslint`/vitest were clean (no test renders these paths); only `tsc -b` caught it (TS2741 × 4). All 4 already had `inputVars` in scope via `useFunctionContext()`|V46
 B29|2026-08-10|`UncertainUQ` threw away non-OK response bodies and only logged the exception; empty `plotData` then routed to `InsufficientDataWarning`, which showed `Error during calculation, please contact support.` whenever enough jobs existed, masking the backend's actionable `error` text|V47,T47
+B30cg|2026-08-10|analysis views beyond `UncertainUQ` similarly discarded or reduced non-OK/backend error bodies to generic warnings or status-only exceptions; `fetchWithRetry` also discarded terminal HTTP responses after retries, preventing callers from parsing diagnostics|V48ae,T48bf
