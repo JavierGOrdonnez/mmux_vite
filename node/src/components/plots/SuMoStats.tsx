@@ -5,6 +5,7 @@ import { useMMUXContext } from "../../context/MMUXContext";
 import { useFunctionContext } from "../../context/FunctionContext";
 import { useJobContext } from "../../context/JobContext";
 import { computeCvStatistics } from "../../utils/sumoCvAccuracy";
+import { getResponseErrorMessage } from "../../utils/httpError";
 import CalculatingWarning from "./CalculatingWarning";
 import InsufficientDataWarning from "./InsufficientDataWarning";
 import StatCard from "./StatCard";
@@ -20,18 +21,21 @@ function SuMoStats() {
   const { selectedQoI } = useMMUXContext();
   const { fetchedJobCollections, filteredJobList } = useJobContext();
   const [cvMetrics, setCvMetrics] = useState<CvMetricsType>();
+  const [errorMessage, setErrorMessage] = useState<string>();
   const [propagating, setPropagating] = useState(false);
 
   useEffect(() => {
     const jobs: OsparcFunctionJob[] = filteredJobList;
     if (!jobs || jobs.length < 5 || !selectedQoI) {
       setCvMetrics(undefined);
+      setErrorMessage(undefined);
       setPropagating(false);
       return undefined;
     }
 
     let cancelled = false;
     setCvMetrics(undefined);
+    setErrorMessage(undefined);
     setPropagating(true);
 
     fetch(`/flask/dakota/sumo_cross_validation`, {
@@ -44,12 +48,18 @@ function SuMoStats() {
         log: false,
       }),
     })
-      .then(response => response.json())
+      .then(async response => {
+        if (!response.ok) {
+          throw new Error(await getResponseErrorMessage(response));
+        }
+        return response.json();
+      })
       .then(data => {
         if (cancelled) return;
         if (!data || data.error) {
           console.warn("SuMo Stats error: ", data?.error);
           setCvMetrics(undefined);
+          setErrorMessage(data?.error || "SuMo Stats returned no results.");
           setPropagating(false);
           return;
         }
@@ -64,12 +74,14 @@ function SuMoStats() {
           return;
         }
         setCvMetrics(computeCvStatistics(y, yHat));
+        setErrorMessage(undefined);
         setPropagating(false);
       })
       .catch(error => {
         if (cancelled) return;
         console.warn("Error fetching SuMo Stats:", error);
         setCvMetrics(undefined);
+        setErrorMessage(error instanceof Error ? error.message : String(error));
         setPropagating(false);
       });
 
@@ -88,6 +100,7 @@ function SuMoStats() {
         fetchedJobCollections={fetchedJobCollections}
         filteredJobList={filteredJobList}
         height={200}
+        errorMessage={errorMessage}
         numInputVars={inputVars.length}
       />
     );

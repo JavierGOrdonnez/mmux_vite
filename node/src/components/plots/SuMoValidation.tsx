@@ -12,6 +12,7 @@ import InsufficientDataWarning from "./InsufficientDataWarning";
 import { useFunctionContext } from "../../context/FunctionContext";
 import { useJobContext } from "../../context/JobContext";
 import { buildDakotaRequestKey } from "../../utils/dakotaRequestKey";
+import { getResponseErrorMessage } from "../../utils/httpError";
 import {
   computeCvStatistics,
   CvConvergencePoint,
@@ -30,6 +31,7 @@ function SuMoValidation() {
   const [propagating, setPropagating] = useState(false);
   const [tTest, setTTest] = useState<PairedTTestResult>();
   const [convergence, setConvergence] = useState<CvConvergencePoint[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string>();
   const lastFetchedCvAccuracyKey = useRef<string | undefined>(undefined);
   const [width, setWidth] = useState(1080);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -90,6 +92,7 @@ function SuMoValidation() {
 
     setCvMetrics(undefined);
     setPlotData([]);
+    setErrorMessage(undefined);
     setPropagating(true);
 
     fetch(`/flask/dakota/sumo_cross_validation`, {
@@ -102,8 +105,13 @@ function SuMoValidation() {
         log: false,
       }),
     })
-      .then(response => response.json())
-      .then(response => {
+      .then(async response => {
+        if (!response.ok) {
+          throw new Error(await getResponseErrorMessage(response));
+        }
+        return response.json();
+      })
+      .then(async response => {
         if (!response || (response && response.error)) {
           console.warn("SuMo Validation error: ", response.error);
           throw new Error(`Error running SuMo Validation: ${response.error}`);
@@ -118,6 +126,7 @@ function SuMoValidation() {
         setPropagating(false);
         setPlotData([]);
         setCvMetrics(undefined);
+        setErrorMessage(error instanceof Error ? error.message : String(error));
       });
   };
 
@@ -147,9 +156,7 @@ function SuMoValidation() {
         if (response && !response.ok) {
           // V18/V23-style: reject (⊥ resolve) so .catch clears lastFetchedCvAccuracyKey
           // and identical inputs can be retried instead of caching a failed fetch.
-          return Promise.reject(
-            new Error(`SuMo CV accuracy metrics response not ok: ${response.status}, ${response.statusText}`),
-          );
+          return Promise.reject(new Error(await getResponseErrorMessage(response)));
         }
         return response.json();
       })
@@ -167,6 +174,7 @@ function SuMoValidation() {
         lastFetchedCvAccuracyKey.current = undefined;
         setTTest(undefined);
         setConvergence([]);
+        setErrorMessage(error instanceof Error ? error.message : String(error));
       });
   };
 
@@ -271,6 +279,7 @@ function SuMoValidation() {
           fetchedJobCollections={fetchedJobCollections}
           filteredJobList={filteredJobList}
           height={plotStyle.height}
+          errorMessage={errorMessage}
           numInputVars={inputVars.length}
         />
       )}
