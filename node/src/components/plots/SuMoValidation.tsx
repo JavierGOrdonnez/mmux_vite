@@ -152,7 +152,7 @@ function SuMoValidation() {
         FunctionJobs: jobs,
       }),
     })
-      .then(response => {
+      .then(async response => {
         if (response && !response.ok) {
           // V18/V23-style: reject (⊥ resolve) so .catch clears lastFetchedCvAccuracyKey
           // and identical inputs can be retried instead of caching a failed fetch.
