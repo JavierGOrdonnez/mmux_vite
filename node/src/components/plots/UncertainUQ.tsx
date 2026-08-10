@@ -17,11 +17,13 @@ export default function UncertainUQ(props: LoadingPropsType) {
   const { fetchedJobCollections, filteredJobList } = useJobContext();
   const [plotData, setPlotData] = useState<Plotly.Data[]>([]);
   const [propagating, setPropagating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string>();
 
   useEffect(() => {
     (async () => {
       console.log("running job collections: ", filteredJobList);
       setPlotData([]);
+      setErrorMessage(undefined);
       setPropagating(true);
       if (filteredJobList.length === 0) {
         console.warn("No jobs selected for UQ propagation.");
@@ -46,7 +48,9 @@ export default function UncertainUQ(props: LoadingPropsType) {
           }),
         });
         if (!response.ok) {
-          throw new Error(`Error in UQ response: ${response.status}, ${response.statusText}`);
+          const errorPayload = await response.json().catch(() => undefined);
+          const serverMessage = errorPayload && typeof errorPayload.error === "string" ? errorPayload.error : undefined;
+          throw new Error(serverMessage || `Error in UQ response: ${response.status}, ${response.statusText}`);
         }
         const data: DataUQHistogramType = await response.json();
         const newPlotData: Plotly.Data[] = [
@@ -70,6 +74,7 @@ export default function UncertainUQ(props: LoadingPropsType) {
         setPropagating(false);
       } catch (error) {
         console.warn("Error:", error);
+        setErrorMessage(error instanceof Error ? error.message : "Error during calculation, please contact support.");
         setPropagating(false);
       }
     })();
@@ -102,6 +107,7 @@ export default function UncertainUQ(props: LoadingPropsType) {
           filteredJobList={filteredJobList}
           height={plotStyle.height}
           numInputVars={inputVars.length}
+          errorMessage={errorMessage}
         />
       )}
       {!propagating && plotData.length !== 0 && <Plot data={plotData} layout={layout} style={plotStyle} />}
