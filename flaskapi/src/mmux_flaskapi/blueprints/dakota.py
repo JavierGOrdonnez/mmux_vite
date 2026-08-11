@@ -949,12 +949,19 @@ def flask_get_sumo_cv_accuracy_metrics():
 
         accuracy_metrics = compute_cv_accuracy_metrics(actual, predicted)
         t_test = compute_paired_ttest(actual, predicted)
-        convergence = compute_cv_convergence(
-            run_dir,
-            PROCESSED_TRAINING_FILE,
-            input_vars,
-            output_response,
-        )
+        minimum_samples = required_completed_jobs(input_vars)
+        if minimum_samples >= len(jobs):
+            convergence = [
+                {"n_samples": len(jobs), "metric": accuracy_metrics["root_mean_squared"]}
+            ]
+        else:
+            convergence = compute_cv_convergence(
+                run_dir,
+                PROCESSED_TRAINING_FILE,
+                input_vars,
+                output_response,
+                min_samples=minimum_samples,
+            )
 
         # Validate and structure response
         response_data = {

@@ -6,11 +6,13 @@ import SuMoValidation from "./SuMoValidation";
 
 // jsdom does not implement ResizeObserver (used for the plot width tracking box).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(global as any).ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+(global as any).ResizeObserver = vi.fn().mockImplementation(function () {
+  return {
+    observe: vi.fn(),
+    unobserve: vi.fn(),
+    disconnect: vi.fn(),
+  };
+});
 
 // Plotly does not render meaningfully under jsdom; replace with a lightweight stub that
 // still lets us assert on the data/traces passed to it.
