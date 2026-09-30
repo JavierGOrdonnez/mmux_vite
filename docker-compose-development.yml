@@ -12,7 +12,12 @@ services:
       - OSPARC_API_SECRET=${OSPARC_API_SECRET}
       - LOG_LEVEL=DEBUG
       - DEVELOPMENT_MODE=true
-      - UV_CACHE_DIR=/app/.cache/uv
+      # V39jx/B25jx: uv's cache must be writable by the uid-1000 container user AND
+      # outside the ./flaskapi:/app bind mount. The previous /app/.cache/uv value
+      # fixed the unwritable-default problem but re-created the root-ownership class:
+      # any root-era write to the host cache dir permanently breaks every later
+      # non-root `uv run` at container start (Permission denied → exit 2).
+      - UV_CACHE_DIR=/tmp/uv-cache
       - SERVICE_MODE=${SERVICE_MODE}
       - PERMISSIONS=${PERMISSIONS}
       - DEPLOYMENT_MODE=${DEPLOYMENT_MODE}

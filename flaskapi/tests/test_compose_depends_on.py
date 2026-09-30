@@ -90,10 +90,18 @@ def test_development_backend_uses_writable_uv_cache():
         "docker-compose-development.yml: mmux-vite-backend must run as the host UID/GID "
         "from container start, not root (V31vr)"
     )
-    assert "UV_CACHE_DIR=/app/.cache/uv" in backend_block, (
+    cache_line = next(line for line in backend_block.splitlines() if "UV_CACHE_DIR=" in line)
+    cache_dir = cache_line.split("UV_CACHE_DIR=", 1)[1].strip()
+    assert cache_dir, (
         "docker-compose-development.yml: non-root mmux-vite-backend must direct uv's "
-        "cache below the writable /app source mount, not its unwritable default /.cache/uv "
-        "(V36zn/B22zn)"
+        "cache away from its unwritable default /.cache/uv (V36zn/B22zn)"
+    )
+    assert not cache_dir.startswith("/app"), (
+        "docker-compose-development.yml: UV_CACHE_DIR must live OUTSIDE the "
+        "./flaskapi:/app bind mount. A host-backed cache is not root-proof: one "
+        "root-era write to it (e.g. the old /app/.cache/uv, seeded root-owned on "
+        "the host) permanently breaks every later uid-1000 `uv run` at container "
+        "start with 'Permission denied' → exit 2 (V39jx/B25jx)"
     )
 
 
