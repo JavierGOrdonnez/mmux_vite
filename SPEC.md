@@ -27,6 +27,7 @@ Domain: scientific UQ & sensitivity analysis; documented use-case = TI (Temporal
 - pytest test cases ! carry ≥1 marker ∈ {`unit`,`integration`,`analytical`}
 - e2e tests = TS `@playwright/test` runner in `tests/e2e/` (⊥ vitest browser mode for e2e); pixel-perfect `toHaveScreenshot` baselines committed to git; determinism via pinned Playwright docker image (fonts/render); oSPARC mocked at backend boundary (⊥ real oSPARC or production data in e2e); existing baselines stay fixed across refactors; new correlation/Sobol baselines added separately
 - commits ! Conventional Commits `<type>(<scope>): <subject> (#PR)`; types {feat,fix,refactor,chore,docs,test}; feature branch → PR review → merge to `main`
+- PR ! single domain: ⊥ backend (`flaskapi/**`) + frontend (`node/**`, `tests/e2e/**`) in one PR — reviewers gate domains separately, mixed diffs hide cross-domain contract changes; cross-domain work → stacked PRs backend-first, frontend follows (FE interim w/ upstream = defaults/renames only, ⊥ behavior change); PNG baselines ride the FE PR (port replay lesson 2026-10, ledger #43)
 - ⊥ hardcoded secrets / sensitive data in code or git
 
 ## §I
